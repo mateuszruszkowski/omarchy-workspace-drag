@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+app_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+case "${1:-status}" in
+    start) exec qs --no-duplicate --daemonize --path "$app_dir/shell.qml" ;;
+    stop) exec qs kill --path "$app_dir/shell.qml" ;;
+    begin|end)
+        pointer=""
+        if [ "$#" -ge 4 ]; then printf -v pointer '{"x":%s,"y":%s}' "$3" "$4"; fi
+        exec qs ipc --path "$app_dir/shell.qml" call workspaceDrag "$1" "${2:-manual}" "$pointer" ;;
+    cancel) exec qs ipc --path "$app_dir/shell.qml" call workspaceDrag cancel "${2:-manual}" ;;
+    status|demo) exec qs ipc --path "$app_dir/shell.qml" call workspaceDrag "$1" ;;
+    *) echo 'Usage: workspace-drag {start|stop|status|begin TOKEN|end TOKEN|cancel|demo}' >&2; exit 2 ;;
+esac

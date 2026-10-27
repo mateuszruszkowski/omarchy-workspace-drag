@@ -1,0 +1,131 @@
+# Workspace drag for rogo
+
+Hold **Super+Alt+left mouse button** over a normal window. The source display shows
+normal workspaces arranged in separate circles around each monitor label.
+Existing workspaces and individually configured empty workspaces are included.
+The dimmed desktop remains visible behind the overview. A small dragged-window
+preview follows the pointer. The virtual STUDIO-VIRTUAL output is hidden by default;
+its group is included when it is the source display. Move to a preview and release the mouse
+button to move that window there. The window leaves fullscreen, becomes tiled,
+and moves silently. The active source workspace stays visible. The pointer returns
+to its starting position so the next window can be moved immediately.
+
+The hovered preview enlarges. Hit testing always uses its original slot, including
+on mixed-scale and rotated displays. Release outside a slot, release on the source
+workspace, press Escape, or hold longer than 25 seconds to cancel. Very short holds
+under 120 ms cancel. Press and release carry a sequence token so an early release
+cannot accidentally start a stuck drag.
+
+## Install and remove
+
+Requires Hyprland with Lua dispatchers, Quickshell 0.3.2,
+Python 3. No additional packages or compiled Hyprland plugins are needed.
+
+```bash
+python3 ./install.py
+hyprctl reload
+hyprctl configerrors
+~/.local/share/workspace-drag/workspace-drag start
+```
+
+The installer copies the extension into `~/.local/share/workspace-drag`, appends
+one marked include to `~/.config/hypr/bindings.lua`, and one marked autostart call
+to `~/.config/hypr/autostart.lua`. It creates only its own
+`~/.config/hypr/workspace-drag.lua` module. Every run saves affected files and any
+previous extension under `~/.local/state/workspace-drag/backups/`. It does not reload
+Hyprland, start processes, or change monitor configuration. Existing extension
+`config.json` and `bindings.lua` are preserved on update.
+
+```bash
+~/.local/share/workspace-drag/workspace-drag stop
+python3 ./install.py --uninstall
+hyprctl reload
+hyprctl configerrors
+```
+
+Uninstall removes only the marked includes and the extension's own paths, keeping
+the rest of user configuration and all backups. A modified include module is kept.
+Do not restore entire backed-up binding files over concurrent edits. Restore only
+the extension's changes when necessary.
+
+## Settings
+
+Edit `~/.local/share/workspace-drag/bindings.lua` to change `shortcut`. The default
+is `SUPER + ALT + mouse:272`. Use Omarchy's Lua key syntax, then reload Hyprland and
+check `hyprctl configerrors`. The shortcut uses a normal press/release bind, without
+`mouse=true`, because Hyprland's mouse dispatcher bindings cannot run shell actions.
+
+Edit `~/.local/share/workspace-drag/config.json` for these settings. They load at the
+next drag without restart.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `groupColumns` | 0 | Monitor circles per row. Zero chooses the largest fitting layout automatically. |
+| `cardWidth`, `cardHeight` | 230, 150 | Logical card size before fitting the source display. |
+| `gap` | 24 | Space between slots. |
+| `zoom` | 1.15 | Hover scale from 1.0 to 1.35. |
+| `backgroundOpacity` | 0.72 | Dimmed theme backdrop opacity. The desktop remains visible underneath. |
+| `previewMode` | `thumbnails` | Set to `titles` to show application window titles instead of captures. |
+| `hiddenMonitors` | `["STUDIO-VIRTUAL"]` | Hide these monitor groups, except when one is the source. Set `[]` to show every output. |
+| `timeoutSeconds` | 25 | Cancel a stuck hold. |
+| `pollMilliseconds` | 35 | Cursor update interval during an active drag. |
+| `restoreCursor` | true | Return to the source location after dropping or cancelling. |
+| `defaultWorkspaces` | 1 through 10 | Fallback used only when no individual normal workspace rules exist. |
+
+The dashboard uses Omarchy's current `colors.toml`, watches language changes, and
+supports Polish and English. If no language file exists, it follows `LANG`. Rounded
+corners follow `decoration:rounding` from Hyprland at drag start. All dynamic labels
+are plain text. Workspace names are validated before use in dispatchers.
+
+## Architecture and limits
+
+`bindings.lua` owns the chord and unique press/release token. `shell.qml` is an
+isolated resident Quickshell UI and exposes `workspaceDrag` IPC. `backend.py` owns
+the state machine, source-window selection, card layout, final global cursor hit
+test and address-selected Hyprland dispatch. Its state is idle or a `Dragging`
+record. `end` commits a valid target; cancel, timeout and stale topology return to
+idle. A 120 ms deferred pointer restoration lets the layer close first.
+
+A shell plugin was considered but would put this experiment in Omarchy's main
+shell process. An external screenshot tool was considered but would need subprocess
+capture and risks recursive monitor thumbnails. This standalone process uses native
+`ScreencopyView` with each Hyprland toplevel's Wayland handle. No whole-output
+capture, network access, or screenshot cache is used. Window titles stay in the
+local UI pipe, are rendered as plain text in titles mode, and are never logged.
+Only pointer deltas are sent each frame; static models are published once per drag.
+The click-through overlay does not depend on receiving a mouse release and never
+takes keyboard focus. Native Lua bindings supply release and guarded Escape.
+Taking exclusive or on-demand layer keyboard focus would clear Hyprland
+mouse-button state and lose the release event. Slots remain fixed while hovered
+cards enlarge. Circle placement reserves room for enlarged cards and center labels
+and packs groups into an adaptive grid on the source output.
+
+Captures of inactive workspaces depend on the compositor and application continuing
+to supply buffers. If unavailable, the miniature shows the application class. A
+workspace with no monitor rule is assigned to the source display for empty-target
+planning. Monitor description rules are supported. Dynamic workspace selectors
+such as `w[1-10]` are not expanded. All existing normal workspaces are still shown.
+Special workspaces are excluded. Named normal workspaces, including those with
+negative Hyprland IDs, are supported. The overlay is shown only on the source
+display, so every visible monitor group can be reached without crossing outputs.
+
+## Diagnostics and verification
+
+```bash
+python3 -m unittest discover -s . -p 'test_*.py' -v
+~/.local/share/workspace-drag/workspace-drag status
+~/.local/share/workspace-drag/workspace-drag cancel
+~/.local/share/workspace-drag/workspace-drag demo
+qs log --path ~/.local/share/workspace-drag/shell.qml --tail 40
+```
+
+`demo` creates synthetic targets and illustrative windows without moving any
+real window. Its backdrop is solid so a screenshot does not expose the desktop. It still follows the real pointer to exercise hover zoom. The timeout or
+`cancel` closes it. `begin TOKEN` and `end TOKEN` are also available for controlled
+integration testing. `status` contains state, monitor and hovered workspace, without
+window titles. Unit tests fake the IPC boundary and cover fresh release coordinates,
+silent address-targeted movement, early release, cancel/timeout, source close,
+monitor unplug and scale changes, empty configured targets, mixed-scale hit testing,
+pointer restoration, demo safety, non-overlapping two/three-monitor circle layouts,
+and virtual-output filtering. Real compositor acceptance, visual checks and
+remaining limits are recorded in [VERIFICATION.md](VERIFICATION.md).

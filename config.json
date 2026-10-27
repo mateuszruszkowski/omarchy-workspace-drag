@@ -1,0 +1,14 @@
+{
+  "groupColumns": 0,
+  "cardWidth": 230,
+  "cardHeight": 150,
+  "gap": 24,
+  "zoom": 1.15,
+  "backgroundOpacity": 0.72,
+  "previewMode": "thumbnails",
+  "hiddenMonitors": ["STUDIO-VIRTUAL"],
+  "timeoutSeconds": 25,
+  "pollMilliseconds": 35,
+  "restoreCursor": true,
+  "defaultWorkspaces": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+}
