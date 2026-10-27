@@ -1,5 +1,28 @@
--- Change this shortcut, then reload Hyprland. Mouse buttons use their evdev code.
+-- workspace-drag managed shortcut data v1
 local shortcut = "SUPER + ALT + mouse:272"
+local shortcut_file = io.open(os.getenv("HOME") .. "/.local/share/workspace-drag/shortcut.conf", "r")
+if shortcut_file then
+  local configured = shortcut_file:read("*a"):match("^%s*(.-)%s*$")
+  shortcut_file:close()
+  local allowed = { SUPER = 1, ALT = 2, CTRL = 3, SHIFT = 4 }
+  local previous = 0
+  local valid = false
+  local parts = {}
+  for raw_part in configured:gmatch("[^+]+") do
+    local part = raw_part:match("^%s*(.-)%s*$")
+    table.insert(parts, part)
+    if allowed[part] and allowed[part] > previous and not valid then
+      previous = allowed[part]
+    elseif previous > 0 and not valid and (part == "mouse:272" or part == "mouse:273" or part == "mouse:274") then
+      valid = true
+    else
+      valid = false
+      previous = -1
+      break
+    end
+  end
+  if valid and table.concat(parts, " + ") == configured then shortcut = configured end
+end
 local command = os.getenv("HOME") .. "/.local/share/workspace-drag/workspace-drag"
 local sequence = 0
 local token = ""

@@ -34,7 +34,10 @@ to `~/.config/hypr/autostart.lua`. It creates only its own
 `~/.config/hypr/workspace-drag.lua` module. Every run saves affected files and any
 previous extension under `~/.local/state/workspace-drag/backups/`. It does not reload
 Hyprland, start processes, or change monitor configuration. Existing extension
-`config.json` and `bindings.lua` are preserved on update.
+`config.json` and `shortcut.conf` are preserved on update. An older shipped
+`bindings.lua` is migrated after saving its original custom shortcut. Unknown
+custom Lua is refused before installation changes any files. A launcher named
+**Workspace Drag — Ustawienia** is installed in the application menu.
 
 ```bash
 ~/.local/share/workspace-drag/workspace-drag stop
@@ -50,13 +53,38 @@ the extension's changes when necessary.
 
 ## Settings
 
-Edit `~/.local/share/workspace-drag/bindings.lua` to change `shortcut`. The default
-is `SUPER + ALT + mouse:272`. Use Omarchy's Lua key syntax, then reload Hyprland and
-check `hyprctl configerrors`. The shortcut uses a normal press/release bind, without
-`mouse=true`, because Hyprland's mouse dispatcher bindings cannot run shell actions.
+Open **Workspace Drag — Ustawienia** in the application menu, or run:
 
-Edit `~/.local/share/workspace-drag/config.json` for these settings. They load at the
-next drag without restart.
+```bash
+~/.local/share/workspace-drag/workspace-drag settings
+```
+
+The Polish settings window provides Super, Alt, Ctrl and Shift checkboxes, a
+left/right/middle mouse selector, a backdrop dimming slider and a choice between
+window thumbnails and window titles. The shortcut summary updates while editing.
+At least one modifier is required. **Domyślne** resets only the displayed draft.
+**Zapisz i zastosuj** writes it; **Wczytaj ponownie** discards the draft and reads
+the current saved settings. Closing the window discards unsaved edits.
+
+A higher dimming percentage hides more of the desktop behind the overview.
+Appearance changes take effect on the next drag. A shortcut change checks live
+Hyprland bindings, then reloads and checks the compositor configuration. An
+occupied shortcut is rejected without changing files. The existing Super+mouse
+move/resize bindings are therefore preserved. The helper saves copies under
+`~/.local/share/workspace-drag/settings-backups/`, writes files atomically, and
+restores the previous files and reloads them if application fails. Errors stay
+visible in the window.
+
+The shortcut is plain data in `~/.local/share/workspace-drag/shortcut.conf`, for
+example `SUPER + ALT + mouse:272`. Modifiers use the order SUPER, ALT, CTRL, SHIFT;
+buttons are 272 (left), 273 (right) and 274 (middle). `bindings.lua` reads only this
+allowlisted format and never evaluates the data as Lua. Keep manual shortcut
+changes in this file, then reload Hyprland and check `hyprctl configerrors`.
+The shortcut uses a normal press/release bind, without `mouse=true`, because
+Hyprland's mouse dispatcher bindings cannot run shell actions.
+
+Other settings remain in `~/.local/share/workspace-drag/config.json`. The panel
+preserves fields it does not edit. They load at the next drag without restart.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -79,7 +107,9 @@ are plain text. Workspace names are validated before use in dispatchers.
 
 ## Architecture and limits
 
-`bindings.lua` owns the chord and unique press/release token. `shell.qml` is an
+`settings.qml` is a separate normal window; it does not change the click-through
+overview. `settings.py` validates its JSON draft and applies changes without shell
+interpolation. `bindings.lua` reads the chord and owns the unique press/release token. `shell.qml` is an
 isolated resident Quickshell UI and exposes `workspaceDrag` IPC. `backend.py` owns
 the state machine, source-window selection, card layout, final global cursor hit
 test and address-selected Hyprland dispatch. Its state is idle or a `Dragging`
