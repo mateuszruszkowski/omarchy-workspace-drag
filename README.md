@@ -23,6 +23,7 @@ Python 3. No additional packages or compiled Hyprland plugins are needed.
 
 ```bash
 python3 ./install.py
+omarchy plugin enable local.workspace-drag --section centerBegin
 hyprctl reload
 hyprctl configerrors
 ~/.local/share/workspace-drag/workspace-drag start
@@ -59,12 +60,25 @@ Open **Workspace Drag — Ustawienia** in the application menu, or run:
 ~/.local/share/workspace-drag/workspace-drag settings
 ```
 
+The grid icon immediately to the left of the clock also opens settings. Clicking
+it while the panel is open focuses the existing window. The installer copies the
+user-owned `local.workspace-drag` bar plugin; the enable command above places it
+in `centerBegin` without changing the clock's center section. Other bar entries
+and plugin files are preserved.
+
 The Polish settings window provides Super, Alt, Ctrl and Shift checkboxes, a
 left/right/middle mouse selector, a backdrop dimming slider and a choice between
 window thumbnails and window titles. The shortcut summary updates while editing.
 At least one modifier is required. **Domyślne** resets only the displayed draft.
 **Zapisz i zastosuj** writes it; **Wczytaj ponownie** discards the draft and reads
 the current saved settings. Closing the window discards unsaved edits.
+
+**Podgląd** opens the actual workspace overview using the current dimming and
+preview-mode controls, including unsaved edits. It displays real windows without
+grabbing one. **Zamknij podgląd** or Escape returns to the unchanged settings
+draft. The configured timeout also closes it. Preview neither saves settings nor
+moves windows, switches workspaces or restores the pointer. A running drag must
+finish before preview can open.
 
 A higher dimming percentage hides more of the desktop behind the overview.
 Appearance changes take effect on the next drag. A shortcut change checks live

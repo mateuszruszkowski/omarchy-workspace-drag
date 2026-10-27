@@ -1,5 +1,6 @@
 import copy
 import unittest
+from unittest.mock import patch
 
 from backend import Controller, DEFAULTS, layout_dashboard, logical_monitor, target_at, workspace_targets
 
@@ -191,6 +192,104 @@ class WorkspaceDragTests(unittest.TestCase):
         self.controller.finish("demo")
         self.assertFalse(self.ipc.dispatches)
         self.assertFalse(self.controller.drag)
+
+    def test_preview_uses_real_workspaces_clients_and_draft_appearance(self):
+        appearance = {"backgroundOpacity": .34, "previewMode": "titles"}
+        with patch("pathlib.Path.write_text", side_effect=AssertionError("preview wrote a file")):
+            self.assertTrue(self.controller.preview("preview-a", appearance))
+            data = self.output[-1]
+            self.assertEqual(data["mode"], "preview")
+            self.assertFalse(data["demo"])
+            self.assertEqual(data["backgroundOpacity"], .34)
+            self.assertEqual(data["previewMode"], "titles")
+            self.assertEqual(data["source"], "")
+            self.assertEqual(data["sourceWorkspace"], "")
+            self.assertEqual([c["name"] for c in data["cards"]], ["1", "2", "4", "5"])
+            self.assertEqual([g["monitor"] for g in data["groups"]], ["eDP-1", "DP-6"])
+            self.assertEqual(data["clients"][0]["address"], "0xabc")
+            self.assertEqual(data["clients"][0]["title"], "PRIVATE NEVER SERIALIZE")
+        self.assertFalse(self.ipc.dispatches)
+        self.assertFalse(self.ipc.requests)
+
+    def test_preview_release_cancel_and_timeout_never_restore_cursor_or_move(self):
+        for ending in ("release", "cancel", "timeout"):
+            with self.subTest(ending=ending):
+                self.setUp()
+                self.controller.preview("preview-a", {})
+                self.time += .5
+                self.aim("5")
+                if ending == "timeout":
+                    self.time += 130
+                    self.controller.tick()
+                else:
+                    self.controller.finish("preview-a", cancel=ending == "cancel")
+                self.time += 1
+                self.controller.tick()
+                self.assertIsNone(self.controller.drag)
+                self.assertIsNone(self.controller.restore)
+                self.assertFalse(self.ipc.dispatches)
+                self.assertFalse(self.ipc.requests)
+
+    def test_preview_reloads_saved_config_and_next_drag_discards_draft(self):
+        saved = DEFAULTS | {"backgroundOpacity": .8, "previewMode": "thumbnails", "cardWidth": 345}
+        self.controller.config = DEFAULTS | {"cardWidth": 123}
+        with patch("backend.load_config", side_effect=lambda: saved.copy()):
+            self.controller.preview("preview-a", {"backgroundOpacity": .22, "previewMode": "titles"})
+            self.assertEqual(self.controller.config["cardWidth"], 345)
+            self.assertEqual(self.controller.config["backgroundOpacity"], .22)
+            self.controller.finish("preview-a", cancel=True)
+            self.begin()
+        self.assertEqual(self.controller.config["backgroundOpacity"], .8)
+        self.assertEqual(self.controller.config["previewMode"], "thumbnails")
+        self.assertEqual(saved["backgroundOpacity"], .8)
+
+    def test_invalid_preview_does_not_replace_active_drag(self):
+        invalid = (None, [], {"backgroundOpacity": True}, {"backgroundOpacity": float("nan")},
+                           {"backgroundOpacity": float("inf")}, {"backgroundOpacity": .09},
+                           {"backgroundOpacity": 1.01}, {"previewMode": "unknown"}, {"restoreCursor": False})
+        for appearance in invalid:
+            self.assertFalse(self.controller.preview("invalid", appearance))
+            self.assertIsNone(self.controller.drag)
+        self.begin()
+        original = self.controller.drag
+        for appearance in invalid:
+            with self.subTest(appearance=appearance):
+                self.assertFalse(self.controller.preview("preview-a", appearance))
+                self.assertIs(self.controller.drag, original)
+        self.assertFalse(self.controller.preview("preview-a", {}))
+        self.controller.demo()
+        self.assertIs(self.controller.drag, original)
+        self.assertFalse(self.ipc.dispatches)
+
+    def test_preview_prevents_drag_start_and_supports_empty_clients(self):
+        self.ipc.data["clients"] = []
+        self.controller.preview("preview-a", {})
+        self.assertEqual(self.output[-1]["clients"], [])
+        self.assertEqual(len(self.controller.drag.cards), 4)
+        original = self.controller.drag
+        self.controller.begin("a")
+        self.assertIs(self.controller.drag, original)
+        self.controller.finish("a")
+        self.assertIs(self.controller.drag, original)
+        self.assertFalse(self.ipc.dispatches)
+
+    def test_preview_chooses_pointer_monitor_then_focused_fallback(self):
+        self.ipc.data["monitors"][0]["focused"] = True
+        self.ipc.data["cursorpos"] = {"x": 2000, "y": 100}
+        self.controller.preview("preview-a", {})
+        self.assertEqual(self.output[-1]["screen"], "DP-6")
+        self.controller.finish("preview-a", cancel=True)
+        self.ipc.data["cursorpos"] = {"x": -100, "y": -100}
+        self.controller.preview("preview-b", {})
+        self.assertEqual(self.output[-1]["screen"], "eDP-1")
+
+    def test_preview_without_monitor_is_rejected_truthfully(self):
+        self.ipc.data["monitors"] = []
+        self.assertFalse(self.controller.preview("preview-a", {}))
+        self.assertEqual(self.output[-1]["state"], "preview-result")
+        self.assertFalse(self.output[-1]["ok"])
+        self.assertIsNone(self.controller.drag)
+        self.assertFalse(self.ipc.dispatches)
 
     def test_native_press_source_address_is_authoritative(self):
         background = copy.deepcopy(self.ipc.data["clients"][0])

@@ -205,7 +205,7 @@ class Dragging:
     groups: list
     clients: list
     started: float
-    demo: bool = False
+    mode: str = "drag"
 
 
 class Controller:
@@ -224,13 +224,14 @@ class Controller:
         hovered = target_at(drag.cards, drag.monitor, pointer or drag.origin)
         self.emit({"state": "dragging", "token": drag.token, "screen": drag.monitor["name"],
                    "monitor": drag.monitor, "monitors": drag.monitors, "cards": drag.cards,
-                   "groups": drag.groups, "source": drag.source["address"],
+                   "groups": drag.groups, "source": drag.source.get("address", ""),
                    "sourceClient": {k: drag.source.get(k, "") for k in ("address", "class", "title", "size")},
                    "pointer": pointer_data(pointer or drag.origin, drag.monitor),
                    "backgroundOpacity": self.config["backgroundOpacity"], "previewMode": self.config["previewMode"],
-                   "sourceWorkspace": drag.source["workspace"]["name"],
+                   "sourceWorkspace": drag.source.get("workspace", {}).get("name", ""),
                    "clients": drag.clients, "hovered": hovered["name"] if hovered else "",
-                   "zoom": self.config["zoom"], "rounding": self.config.get("rounding", 0), "demo": drag.demo})
+                   "zoom": self.config["zoom"], "rounding": self.config.get("rounding", 0),
+                   "mode": drag.mode, "demo": drag.mode == "demo"})
 
     def begin(self, token, pointer=None):
         if token in self.ended or self.drag:
@@ -263,15 +264,51 @@ class Controller:
         source = candidates[0]
         if not re.fullmatch(r"0x[0-9a-fA-F]+", source["address"]):
             return
-        visible_monitors = [m for m in monitors if m["name"] not in self.config["hiddenMonitors"] or m["name"] == monitor["name"]]
-        targets = workspace_targets(visible_monitors, self.ipc.get("workspaces"), self.ipc.get("workspacerules"), self.config, monitor)
-        cards, groups = layout_dashboard(targets, monitor, self.config)
-        # Titles are sent only over the local UI pipe and are never logged.
+        cards, groups, previews = self.dashboard_data(monitors, monitor, clients, self.config)
+        self.drag = Dragging(token, source, monitor, pointer, monitors, cards, groups, previews, self.clock())
+        self.publish(pointer)
+
+    def dashboard_data(self, monitors, monitor, clients, config):
+        visible_monitors = [m for m in monitors if m["name"] not in config["hiddenMonitors"] or m["name"] == monitor["name"]]
+        targets = workspace_targets(visible_monitors, self.ipc.get("workspaces"), self.ipc.get("workspacerules"), config, monitor)
+        cards, groups = layout_dashboard(targets, monitor, config)
+        # Titles travel only over the local UI pipe and are never logged.
         previews = [{k: c[k] for k in ("address", "at", "size", "workspace", "monitor", "class", "title", "floating") if k in c}
                     for c in clients if c.get("mapped") and not c.get("hidden")
                     and normal_name(c.get("workspace", {}).get("name", ""))]
-        self.drag = Dragging(token, source, monitor, pointer, monitors, cards, groups, previews, self.clock())
+        return cards, groups, previews
+
+    def preview(self, token, appearance):
+        valid = isinstance(appearance, dict) and not (appearance.keys() - {"backgroundOpacity", "previewMode"})
+        if valid and "backgroundOpacity" in appearance:
+            opacity = appearance["backgroundOpacity"]
+            valid = type(opacity) in (int, float) and math.isfinite(opacity) and .1 <= opacity <= 1
+        if valid and "previewMode" in appearance:
+            valid = appearance["previewMode"] in ("thumbnails", "titles")
+        if not valid or self.drag:
+            self.emit({"state": "preview-result", "token": token, "ok": False,
+                       "error": "Trwa przeciąganie lub podgląd." if self.drag else "Nieprawidłowe ustawienia podglądu."})
+            return False
+        config = load_config()
+        config.update(appearance)
+        try:
+            config["rounding"] = max(0, min(40, self.ipc.get("getoption decoration:rounding")["int"]))
+        except (KeyError, ValueError, TypeError):
+            config["rounding"] = 0
+        monitors = [logical_monitor(m) for m in self.ipc.get("monitors") if not m.get("disabled")]
+        if not monitors:
+            self.emit({"state": "preview-result", "token": token, "ok": False, "error": "Brak dostępnego monitora."})
+            return False
+        pointer = self.ipc.get("cursorpos")
+        monitor = next((m for m in monitors if m["x"] <= pointer["x"] < m["x"] + m["logicalWidth"]
+                        and m["y"] <= pointer["y"] < m["y"] + m["logicalHeight"]), None)
+        monitor = monitor or next((m for m in monitors if m.get("focused")), monitors[0])
+        cards, groups, clients = self.dashboard_data(monitors, monitor, self.ipc.get("clients"), config)
+        self.restore = None
+        self.config = config
+        self.drag = Dragging(token, {}, monitor, pointer, monitors, cards, groups, clients, self.clock(), "preview")
         self.publish(pointer)
+        return True
 
     def finish(self, token, cancel=False, pointer=None):
         self.ended[token] = self.clock()
@@ -281,8 +318,10 @@ class Controller:
             return
         self.drag = None
         self.emit({"state": "idle"})
+        if drag.mode != "drag":
+            return
         self.restore = (self.clock() + .12, drag)
-        if cancel or drag.demo or self.clock() - drag.started < .12:
+        if cancel or self.clock() - drag.started < .12:
             return
         pointer = pointer or self.ipc.get("cursorpos")
         target = target_at(drag.cards, drag.monitor, pointer)
@@ -314,7 +353,7 @@ class Controller:
         if self.restore and self.clock() >= self.restore[0]:
             _, drag = self.restore
             self.restore = None
-            if not drag.demo and self.config.get("restoreCursor"):
+            if drag.mode == "drag" and self.config.get("restoreCursor"):
                 monitors = self.ipc.get("monitors")
                 if any(m["name"] == drag.monitor["name"] and m["activeWorkspace"]["id"] == drag.source["workspace"]["id"] for m in monitors):
                     self.ipc.dispatch(f"hl.dispatch(hl.dsp.cursor.move({{x={int(drag.origin['x'])},y={int(drag.origin['y'])}}}))")
@@ -328,6 +367,8 @@ class Controller:
                            "pointer": pointer_data(pointer, self.drag.monitor)})
 
     def demo(self):
+        if self.drag:
+            return
         monitors = [logical_monitor(m) for m in self.ipc.get("monitors") if not m.get("disabled")]
         monitor = next((m for m in monitors if m.get("focused")), monitors[0])
         monitors = [m for m in monitors if m["name"] not in self.config["hiddenMonitors"] or m["name"] == monitor["name"]]
@@ -339,7 +380,7 @@ class Controller:
         previews = [{"address": "demo-" + target["name"] + str(i), "workspace": {"name": target["name"]},
                      "class": name, "title": title} for target in targets
                     for i, (name, title) in enumerate((("Terminal", "Build and test"), ("Browser", "Project documentation"), ("Files", "Downloads")))]
-        self.drag = Dragging("demo", source, monitor, self.ipc.get("cursorpos"), monitors, cards, groups, previews, self.clock(), True)
+        self.drag = Dragging("demo", source, monitor, self.ipc.get("cursorpos"), monitors, cards, groups, previews, self.clock(), "demo")
         self.publish()
 
 
@@ -372,6 +413,8 @@ def main():
                     elif command == "cancel":
                         cancelled = controller.drag.token if token == "manual" and controller.drag else token
                         controller.finish(cancelled, cancel=True)
+                    elif command == "preview":
+                        controller.preview(token, action.get("appearance"))
                     elif command == "demo":
                         controller.demo()
             controller.tick()

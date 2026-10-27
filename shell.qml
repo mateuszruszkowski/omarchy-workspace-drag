@@ -1,4 +1,6 @@
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Controls.Material
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -10,6 +12,9 @@ ShellRoot {
     property string hovered: ""
     property var pointer: ({localX: 0, localY: 0})
     property bool ready: false
+    property bool previewPending: false
+    property string previewToken: ""
+    property string previewError: ""
     property string configHome: Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config"
     property string stateHome: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
     property string language: Quickshell.env("LANG") || "en"
@@ -17,20 +22,31 @@ ShellRoot {
     property color foreground: "#e8ecf3"
     property color accent: "#8aadf4"
     readonly property bool active: dashboard.state === "dragging"
+    readonly property bool previewing: active && dashboard.mode === "preview"
     readonly property bool polish: language.indexOf("pl") === 0
 
     function send(command, token, position) {
-        if (backend.running && ready)
+        if (backend.running && ready && !(command === "begin" && previewPending))
             backend.write(JSON.stringify({command: command, token: token || "manual", pointer: position ? JSON.parse(position) : null}) + "\n")
     }
     function receive(line) {
         try {
             const data = JSON.parse(line)
+            if (data.state === "preview-result") {
+                previewPending = false
+                previewToken = data.token
+                previewError = data.error || ""
+                return
+            }
             if (data.state === "pointer") {
                 hovered = data.hovered || ""
                 pointer = data.pointer || pointer
             }
             else {
+                if (previewPending) {
+                    previewPending = false
+                    if (data.mode !== "preview") previewError = data.error || "Nie udało się otworzyć podglądu."
+                }
                 dashboard = data
                 hovered = data.hovered || ""
                 pointer = data.pointer || pointer
@@ -68,6 +84,8 @@ ShellRoot {
         onExited: {
             root.dashboard = {state: "idle", cards: [], groups: [], clients: []}
             root.ready = false
+            root.previewPending = false
+            root.previewError = "Usługa podglądu została zatrzymana."
             restart.restart()
         }
     }
@@ -77,8 +95,20 @@ ShellRoot {
         function begin(token: string, position: string): void { root.send("begin", token, position) }
         function end(token: string, position: string): void { root.send("end", token, position) }
         function cancel(token: string): void { root.send("cancel", token) }
+        function preview(settings: string): string {
+            if (!backend.running || !root.ready) return JSON.stringify({ok: false, error: "Usługa podglądu nie jest gotowa."})
+            if (root.active || root.previewPending) return JSON.stringify({ok: false, error: "Trwa przeciąganie lub podgląd."})
+            let appearance
+            try { appearance = JSON.parse(settings) }
+            catch (error) { return JSON.stringify({ok: false, error: "Nieprawidłowe ustawienia podglądu."}) }
+            root.previewToken = "preview-" + Date.now()
+            root.previewError = ""
+            root.previewPending = true
+            backend.write(JSON.stringify({command: "preview", token: root.previewToken, appearance: appearance}) + "\n")
+            return JSON.stringify({ok: true, token: root.previewToken})
+        }
         function demo(): void { root.send("demo") }
-        function status(): string { return JSON.stringify({ready: root.ready, state: root.dashboard.state, screen: root.dashboard.screen || "", hovered: root.hovered, source: root.dashboard.source || "", sourceWorkspace: root.dashboard.sourceWorkspace || "", previewMode: root.dashboard.previewMode || "", ghostReady: ghostCapture.hasContent, error: root.dashboard.error || ""}) }
+        function status(): string { return JSON.stringify({ready: root.ready, state: root.dashboard.state, mode: root.dashboard.mode || "", token: root.dashboard.token || "", previewPending: root.previewPending, previewToken: root.previewToken, previewError: root.previewError, screen: root.dashboard.screen || "", hovered: root.hovered, source: root.dashboard.source || "", sourceWorkspace: root.dashboard.sourceWorkspace || "", previewMode: root.dashboard.previewMode || "", ghostReady: ghostCapture.hasContent, error: root.dashboard.error || ""}) }
     }
     FileView {
         id: theme
@@ -111,23 +141,29 @@ ShellRoot {
         anchors { top: true; bottom: true; left: true; right: true }
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "workspace-drag"
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-        mask: Region {}
+        WlrLayershell.keyboardFocus: root.previewing ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        mask: Region { width: root.previewing ? panel.width : 0; height: root.previewing ? panel.height : 0 }
 
         Rectangle {
             anchors.fill: parent
+            Material.theme: Material.Dark
+            Material.accent: root.accent
+            Material.background: root.background
+            Material.foreground: root.foreground
+            focus: root.previewing
+            Keys.onEscapePressed: if (root.previewing) root.send("cancel", root.dashboard.token)
             color: Qt.rgba(root.background.r, root.background.g, root.background.b, root.dashboard.demo ? 1 : (root.dashboard.backgroundOpacity || .72))
             Text {
                 textFormat: Text.PlainText
                 x: 48; y: 26
-                text: root.polish ? "Przenieś okno na pulpit" : "Move window to workspace"
+                text: root.previewing ? (root.polish ? "Podgląd" : "Preview") : (root.polish ? "Przenieś okno na pulpit" : "Move window to workspace")
                 color: root.foreground
                 font.pixelSize: 26; font.bold: true
             }
             Text {
                 textFormat: Text.PlainText
                 x: 48; y: 64
-                text: root.dashboard.demo
+                text: root.previewing ? (root.polish ? "Bieżąca zawartość pulpitów. Esc zamyka podgląd." : "Current workspace contents. Esc closes preview.") : root.dashboard.demo
                     ? (root.polish ? "Podgląd układu. Zamknie się automatycznie." : "Layout preview. Closes automatically.")
                     : (root.polish ? "Wskaż podgląd i puść przycisk. Esc anuluje." : "Point at a preview and release. Esc cancels.")
                 color: root.foreground; opacity: 0.7
@@ -136,8 +172,15 @@ ShellRoot {
             Text {
                 textFormat: Text.PlainText
                 anchors { right: parent.right; bottom: parent.bottom; margins: 24 }
-                text: root.dashboard.demo ? "DEMO · " + (root.polish ? "Dane syntetyczne · Automatyczne zamknięcie" : "Synthetic data · Closes automatically") : (root.polish ? "Pulpit źródłowy " : "Source workspace ") + (root.dashboard.sourceWorkspace || "")
+                text: root.previewing ? (root.polish ? "Niezapisany wygląd · Automatyczne zamknięcie" : "Unsaved appearance · Closes automatically") : root.dashboard.demo ? "DEMO · " + (root.polish ? "Dane syntetyczne · Automatyczne zamknięcie" : "Synthetic data · Closes automatically") : (root.polish ? "Pulpit źródłowy " : "Source workspace ") + (root.dashboard.sourceWorkspace || "")
                 color: root.foreground; opacity: 0.65; font.pixelSize: 13
+            }
+            Button {
+                anchors { top: parent.top; right: parent.right; margins: 26 }
+                visible: root.previewing
+                text: root.polish ? "Zamknij podgląd" : "Close preview"
+                onClicked: root.send("cancel", root.dashboard.token)
+                z: 200
             }
             Repeater {
                 model: root.active ? root.dashboard.groups : []
@@ -300,6 +343,7 @@ ShellRoot {
             }
             Rectangle {
                 id: dragGhost
+                visible: !root.previewing
                 property var sourceData: root.dashboard.sourceClient || ({})
                 property var captureToplevel: root.toplevel(sourceData.address || "")
                 x: Math.max(0, Math.min(root.pointer.localX + 22, panel.width - width - 8))

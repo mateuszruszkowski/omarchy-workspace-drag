@@ -117,3 +117,33 @@ it did not repeat cross-monitor drag acceptance or reboot the machine.
 The panel uses Quickshell's documented [FloatingWindow](https://quickshell.org/docs/v0.3.2/types/Quickshell/FloatingWindow/)
 and [Process](https://quickshell.org/docs/v0.3.2/types/Quickshell.Io/Process/)
 interfaces. Close requests retain the save process until completion.
+
+## Draft preview and bar icon checks, 2026-10-27
+
+- All 47 Python tests pass. Preview tests cover real workspace data, empty
+  desktops, invalid overrides, busy rejection, reload of saved config on the
+  next drag, and no window or cursor dispatch after release/cancel/timeout.
+- Isolated launcher checks cover ready, stopped, busy and readiness-timeout
+  states. QML syntax checks pass with `/usr/lib/qt6/bin/qmllint --silent`.
+  Native `omarchy plugin validate` accepts the bar plugin.
+- The user granted a quiet input interval for live GUI acceptance. Clicking the
+  grid icon to the left of the clock opened settings. Clicking it again focused
+  the same window, with exactly one settings window present.
+- Real GUI controls set an unsaved dimming value of 55%. The Preview button
+  displayed real workspace cards, two monitor circles, visible desktop through
+  the background, and actual window thumbnails. Switching the draft to titles
+  displayed the actual application titles instead. No dragged-window ghost was
+  present. Escape closed both previews and backend status returned to idle.
+- The settings draft survived preview closure. Reload restored the saved
+  settings. Config and shortcut files remained byte-identical to the pre-test
+  copies. No Save operation was used for the preview tests.
+- Omarchy shell configuration differs only by the new `local.workspace-drag`
+  entry in `centerBegin`. The installer itself does not enable or reposition
+  widgets. Installation and native enablement are distinct steps.
+- Independent Sol source review approved the implementation. The matching
+  installed code was tested; real-desktop captures remain outside Git.
+
+The close button is implemented alongside Escape; the live quiet-interval checks
+used Escape. This change did not repeat physical mouse drag or reboot tests.
+Existing gestures retain a click-through layer without keyboard focus; preview
+alone takes input until dismissed.

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "local.workspace-drag",
+  "name": "Workspace Drag",
+  "version": "1.0.0",
+  "author": "local",
+  "description": "Open Workspace Drag settings",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "BarWidget.qml"},
+  "barWidget": {
+    "displayName": "Workspace Drag",
+    "description": "Open Workspace Drag settings",
+    "category": "System",
+    "allowMultiple": false
+  }
+}

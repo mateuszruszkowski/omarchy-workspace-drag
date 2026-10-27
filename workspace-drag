@@ -3,7 +3,61 @@ set -euo pipefail
 app_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 case "${1:-status}" in
     start) exec qs --no-duplicate --daemonize --path "$app_dir/shell.qml" ;;
-    settings) exec qs --no-duplicate --path "$app_dir/settings.qml" ;;
+    settings) exec python3 "$app_dir/open_settings.py" ;;
+    preview)
+        exec python3 - "$app_dir" "${2:-}" <<'PYTHON'
+import json
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+shell = str(Path(sys.argv[1]) / "shell.qml")
+
+def call(method, *arguments):
+    result = subprocess.run(["qs", "ipc", "--path", shell, "call", "workspaceDrag", method, *arguments],
+                            capture_output=True, text=True, timeout=2)
+    if result.returncode:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        return None
+
+try:
+    appearance = json.loads(sys.argv[2] or "{}")
+    status = call("status")
+    if status is None:
+        started = subprocess.run(["qs", "--no-duplicate", "--daemonize", "--path", shell],
+                                 capture_output=True, text=True, timeout=4)
+        if started.returncode:
+            raise RuntimeError("Nie udało się uruchomić usługi podglądu.")
+    deadline = time.monotonic() + 4
+    while not status or not status.get("ready"):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Usługa podglądu nie jest gotowa. Spróbuj ponownie.")
+        time.sleep(.05)
+        status = call("status")
+    accepted = call("preview", json.dumps(appearance))
+    if not accepted or not accepted.get("ok"):
+        raise RuntimeError((accepted or {}).get("error", "Nie udało się połączyć z usługą podglądu."))
+    deadline = time.monotonic() + 4
+    while True:
+        status = call("status") or {}
+        if status.get("token") == accepted["token"] and status.get("mode") == "preview" and status.get("state") == "dragging":
+            print(json.dumps({"ok": True}))
+            break
+        if status.get("previewToken") == accepted["token"] and status.get("previewError"):
+            raise RuntimeError(status["previewError"])
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Usługa nie potwierdziła otwarcia podglądu. Spróbuj ponownie.")
+        time.sleep(.05)
+except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+    message = str(error) if isinstance(error, RuntimeError) else "Nie udało się otworzyć podglądu."
+    print(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
+    sys.exit(1)
+PYTHON
+        ;;
     stop) exec qs kill --path "$app_dir/shell.qml" ;;
     begin|end)
         pointer=""
@@ -11,5 +65,5 @@ case "${1:-status}" in
         exec qs ipc --path "$app_dir/shell.qml" call workspaceDrag "$1" "${2:-manual}" "$pointer" ;;
     cancel) exec qs ipc --path "$app_dir/shell.qml" call workspaceDrag cancel "${2:-manual}" ;;
     status|demo) exec qs ipc --path "$app_dir/shell.qml" call workspaceDrag "$1" ;;
-    *) echo 'Usage: workspace-drag {start|stop|settings|status|begin TOKEN|end TOKEN|cancel|demo}' >&2; exit 2 ;;
+    *) echo 'Usage: workspace-drag {start|stop|settings|status|begin TOKEN|end TOKEN|cancel|demo|preview JSON}' >&2; exit 2 ;;
 esac

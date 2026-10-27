@@ -2,6 +2,7 @@
 """Install this user-owned extension. Never reloads Hyprland or starts processes."""
 import argparse
 from datetime import datetime
+import json
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +18,35 @@ AUTOSTART_LINE = 'o.launch_on_start("' + str(SHARE / "workspace-drag") + ' start
 DESKTOP_NAME = 'workspace-drag-settings.desktop'
 DESKTOP = '[Desktop Entry]\nType=Application\nName=Workspace Drag — Ustawienia\nComment=Skrót, przyciemnienie i podglądy pulpitów\nExec=' + str(SHARE / 'workspace-drag') + ' settings\nIcon=preferences-desktop\nTerminal=false\nCategories=Settings;DesktopSettings;\nX-Workspace-Drag-Managed=true\n'
 MODULE = 'dofile(os.getenv("HOME") .. "/.local/share/workspace-drag/bindings.lua")\n'
+PLUGIN_ID = "local.workspace-drag"
+PLUGIN = CONFIG / "omarchy/plugins" / PLUGIN_ID
+PLUGIN_SOURCE = SOURCE / "bar-plugin"
+PLUGIN_MARKER = ".workspace-drag-managed"
+
+
+def owned_plugin():
+    marker = PLUGIN / PLUGIN_MARKER
+    if marker.is_file() and marker.read_text() == PLUGIN_ID + "\n":
+        return True
+    return all((PLUGIN / item.relative_to(PLUGIN_SOURCE)).is_file()
+               and (PLUGIN / item.relative_to(PLUGIN_SOURCE)).read_bytes() == item.read_bytes()
+               for item in PLUGIN_SOURCE.rglob("*") if item.is_file())
+
+
+def clean_bar_config(content):
+    config = json.loads(content)
+    layout = config.get("bar", {}).get("layout", {})
+    if not isinstance(layout, dict):
+        raise ValueError("Invalid Omarchy bar layout")
+    changed = False
+    for section, entries in layout.items():
+        if isinstance(entries, list):
+            kept = [entry for entry in entries if not
+                    (entry == PLUGIN_ID or isinstance(entry, dict) and entry.get("id") == PLUGIN_ID)]
+            if kept != entries:
+                layout[section] = kept
+                changed = True
+    return json.dumps(config, ensure_ascii=False, indent=2) + "\n" if changed else None
 
 
 def main():
@@ -29,6 +59,16 @@ def main():
     if not args.uninstall and module.exists() and module.read_text() != MODULE:
         parser.error("workspace-drag.lua already exists with different content; refusing to overwrite")
     desktop_path = SHARE.parent / "applications" / DESKTOP_NAME
+    plugin_owned = PLUGIN.exists() and owned_plugin()
+    if not args.uninstall and PLUGIN.exists() and not plugin_owned:
+        parser.error("Bar plugin directory already exists and is not managed; refusing to overwrite")
+    shell_path = CONFIG / "omarchy/shell.json"
+    cleaned_shell = None
+    if args.uninstall and plugin_owned and shell_path.exists():
+        try:
+            cleaned_shell = clean_bar_config(shell_path.read_text())
+        except (ValueError, AttributeError) as error:
+            parser.error(f"Cannot safely remove bar entry: {error}")
     shortcut_content = None
     if not args.uninstall:
         if desktop_path.exists() and desktop_path.read_text() != DESKTOP:
@@ -59,9 +99,13 @@ def main():
         shutil.copy2(desktop_path, backup / DESKTOP_NAME)
     if SHARE.exists():
         shutil.copytree(SHARE, backup / "app")
+    if plugin_owned:
+        shutil.copytree(PLUGIN, backup / "bar-plugin")
+    if cleaned_shell is not None:
+        shutil.copy2(shell_path, backup / "shell.json")
     if not args.uninstall:
         SHARE.mkdir(parents=True, exist_ok=True)
-        for name in ("shell.qml", "settings.qml", "backend.py", "settings.py", "workspace-drag", "bindings.lua", "shortcut.conf", "config.json", "README.md", "VERIFICATION.md"):
+        for name in ("shell.qml", "settings.qml", "backend.py", "settings.py", "open_settings.py", "workspace-drag", "bindings.lua", "shortcut.conf", "config.json", "README.md", "VERIFICATION.md"):
             if name in ("config.json", "shortcut.conf") and (SHARE / name).exists():
                 continue
             destination = SHARE / name
@@ -72,6 +116,8 @@ def main():
             atomic_write(SHARE / "shortcut.conf", shortcut_content)
         atomic_write(module, MODULE)
         atomic_write(desktop_path, DESKTOP)
+        shutil.copytree(PLUGIN_SOURCE, PLUGIN, dirs_exist_ok=True)
+        atomic_write(PLUGIN / PLUGIN_MARKER, PLUGIN_ID + "\n")
     for filename, include in (("bindings.lua", BINDING_LINE), ("autostart.lua", AUTOSTART_LINE)):
         destination = CONFIG / "hypr" / filename
         content = destination.read_text() if destination.exists() else ""
@@ -80,6 +126,20 @@ def main():
             content = content.rstrip() + "\n\n" + include + "\n"
         atomic_write(destination, content)
     if args.uninstall:
+        if cleaned_shell is not None:
+            atomic_write(shell_path, cleaned_shell)
+        if plugin_owned:
+            # Preserve files edited by the operator and unrelated additions.
+            for source in PLUGIN_SOURCE.rglob("*"):
+                destination = PLUGIN / source.relative_to(PLUGIN_SOURCE)
+                if source.is_file() and destination.is_file() and destination.read_bytes() == source.read_bytes():
+                    destination.unlink()
+            (PLUGIN / PLUGIN_MARKER).unlink(missing_ok=True)
+            for directory in sorted(PLUGIN.rglob("*"), reverse=True):
+                if directory.is_dir() and not any(directory.iterdir()):
+                    directory.rmdir()
+            if not any(PLUGIN.iterdir()):
+                PLUGIN.rmdir()
         if desktop_path.exists() and desktop_path.read_text() == DESKTOP:
             desktop_path.unlink()
         if module.exists() and module.read_text() == MODULE:
@@ -88,7 +148,7 @@ def main():
             shutil.rmtree(SHARE)
         print(f"Removed managed includes and extension. Backup: {backup}")
     else:
-        print(f"Installed: {SHARE}\nBackup: {backup}\nNext: hyprctl reload; hyprctl configerrors; {SHARE}/workspace-drag start")
+        print(f"Installed: {SHARE}\nBackup: {backup}\nEnable bar icon: omarchy plugin enable {PLUGIN_ID} --section centerBegin\nNext: hyprctl reload; hyprctl configerrors; {SHARE}/workspace-drag start")
 
 
 def atomic_write(destination, content):

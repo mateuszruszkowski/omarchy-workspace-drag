@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import settings
+import open_settings
 
 SOURCE = Path(__file__).parent
 
@@ -194,6 +195,94 @@ class InstallerTest(unittest.TestCase):
         self.desktop.write_text("custom desktop")
         self.assertEqual(self.install("--uninstall").returncode, 0)
         self.assertEqual(self.desktop.read_text(), "custom desktop")
+
+    def test_bar_plugin_install_preserves_layout_and_unrelated_plugins(self):
+        shell = self.home / ".config/omarchy/shell.json"
+        shell.parent.mkdir(parents=True)
+        original = '{"custom": true, "bar": {"layout": {"center": [{"id": "clock"}], "right": [{"id": "other"}]}}}'
+        shell.write_text(original)
+        unrelated = shell.parent / "plugins/other/custom.qml"
+        unrelated.parent.mkdir(parents=True)
+        unrelated.write_text("operator plugin")
+        for _ in range(2):
+            result = self.install()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("omarchy plugin enable local.workspace-drag --section centerBegin", result.stdout)
+            self.assertEqual(shell.read_text(), original)
+        plugin = shell.parent / "plugins/local.workspace-drag"
+        self.assertTrue((plugin / "BarWidget.qml").exists())
+        self.assertTrue((self.app / "open_settings.py").exists())
+        custom = plugin / "operator-note.txt"
+        custom.write_text("keep")
+        config = json.loads(original)
+        config["bar"]["layout"]["right"].append({"id": "local.workspace-drag"})
+        shell.write_text(json.dumps(config))
+        self.assertEqual(self.install("--uninstall").returncode, 0)
+        self.assertEqual(json.loads(shell.read_text()), json.loads(original))
+        self.assertEqual(unrelated.read_text(), "operator plugin")
+        self.assertEqual(custom.read_text(), "keep")
+        self.assertFalse((plugin / "BarWidget.qml").exists())
+        self.assertTrue(list((self.home / ".local/state/workspace-drag/backups").glob("*/shell.json")))
+
+    def test_unknown_bar_plugin_collision_is_refused_before_changes(self):
+        custom = self.home / ".config/omarchy/plugins/local.workspace-drag/BarWidget.qml"
+        custom.parent.mkdir(parents=True)
+        custom.write_text("operator plugin")
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(custom.read_text(), "operator plugin")
+        self.assertFalse(self.app.exists())
+        self.assertFalse((self.home / ".local/state").exists())
+
+    def test_uninstall_preserves_modified_owned_plugin_file(self):
+        self.assertEqual(self.install().returncode, 0)
+        custom = self.home / ".config/omarchy/plugins/local.workspace-drag/BarWidget.qml"
+        custom.write_text("operator changes")
+        self.assertEqual(self.install("--uninstall").returncode, 0)
+        self.assertEqual(custom.read_text(), "operator changes")
+
+
+class OpenSettingsTest(unittest.TestCase):
+    @patch.object(open_settings.os, "execvp")
+    @patch.object(open_settings.subprocess, "run")
+    def test_existing_exact_mapped_window_is_focused(self, run, launch):
+        clients = [{"title": open_settings.TITLE, "class": "browser", "mapped": True, "address": "0x1"},
+                   {"title": open_settings.TITLE, "class": "org.quickshell", "mapped": True, "address": "0xaB12"}]
+        run.side_effect = [subprocess.CompletedProcess([], 0, json.dumps(clients)), subprocess.CompletedProcess([], 0, "ok\n")]
+        self.assertEqual(open_settings.main(), 0)
+        self.assertEqual(run.call_args.args[0], ["hyprctl", "eval", 'hl.dispatch(hl.dsp.focus({window="address:0xaB12"}))'])
+        launch.assert_not_called()
+
+    @patch.object(open_settings.os, "execvp")
+    @patch.object(open_settings.subprocess, "run")
+    def test_no_matching_window_launches_single_instance(self, run, launch):
+        run.return_value = subprocess.CompletedProcess([], 0, json.dumps([
+            {"title": open_settings.TITLE + " other", "class": "org.quickshell", "mapped": True},
+            {"title": open_settings.TITLE, "class": "org.quickshell", "mapped": False}]))
+        open_settings.main()
+        launch.assert_called_once_with("qs", ["qs", "--no-duplicate", "--path", str(SOURCE / "settings.qml")])
+
+    @patch.object(open_settings.os, "execvp")
+    @patch.object(open_settings.subprocess, "run")
+    def test_focus_failure_is_reported_without_duplicate_launch(self, run, launch):
+        run.side_effect = [subprocess.CompletedProcess([], 0, json.dumps([
+            {"title": open_settings.TITLE, "class": "org.quickshell", "mapped": True, "address": "0x12"}])),
+            subprocess.TimeoutExpired("hyprctl", 5)]
+        with patch("sys.stderr") as stderr:
+            self.assertEqual(open_settings.main(), 1)
+            self.assertTrue(stderr.write.called)
+        launch.assert_not_called()
+
+    @patch.object(open_settings.os, "execvp")
+    @patch.object(open_settings.subprocess, "run")
+    def test_invalid_window_address_never_reaches_eval(self, run, launch):
+        run.return_value = subprocess.CompletedProcess([], 0, json.dumps([
+            {"title": open_settings.TITLE, "class": "org.quickshell", "mapped": True,
+             "address": '0x12"}); os.execute("unexpected")'}]))
+        with patch("sys.stderr"):
+            self.assertEqual(open_settings.main(), 1)
+        self.assertEqual(run.call_count, 1)
+        launch.assert_not_called()
 
 
 if __name__ == "__main__":

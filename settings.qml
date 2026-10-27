@@ -11,11 +11,13 @@ ShellRoot {
     property string message: "Wczytywanie ustawień…"
     property var saved: null
     property bool closeRequested: false
+    property bool previewStarting: false
+    property string launcher: Qt.resolvedUrl("workspace-drag").toString().replace(/^file:\/\//, "")
     property string helper: Qt.resolvedUrl("settings.py").toString().replace(/^file:\/\//, "")
     property color background: "#171b24"
     property color foreground: "#e8ecf3"
     property color accent: "#8aadf4"
-    readonly property bool busy: phase === "loading" || phase === "saving"
+    readonly property bool busy: phase === "loading" || phase === "saving" || previewStarting
     readonly property string chord: [superKey.checked ? "Super" : "", altKey.checked ? "Alt" : "", ctrlKey.checked ? "Ctrl" : "", shiftKey.checked ? "Shift" : "", mouse.currentText].filter(x => x !== "").join(" + ")
     readonly property bool hasModifier: superKey.checked || altKey.checked || ctrlKey.checked || shiftKey.checked
 
@@ -80,6 +82,23 @@ ShellRoot {
         onStarted: { write(JSON.stringify(root.draft())); stdinEnabled = false }
         stdout: StdioCollector { id: writeOutput }
         onExited: (exitCode, exitStatus) => root.receive(writeOutput.text, exitCode)
+    }
+    Process {
+        id: previewer
+        stdinEnabled: false
+        stdout: StdioCollector { id: previewOutput }
+        onExited: (exitCode, exitStatus) => {
+            root.previewStarting = false
+            try {
+                const result = JSON.parse(previewOutput.text)
+                if (exitCode !== 0 || !result.ok) throw new Error(result.error || "Nie udało się otworzyć podglądu.")
+                root.phase = "editing"
+                root.message = "Podgląd otwarty. Zamknij go przyciskiem lub Esc, aby wrócić do ustawień. Podgląd nie zapisuje zmian."
+            } catch (error) {
+                root.phase = "error"
+                root.message = String(error.message || error)
+            }
+        }
     }
     FloatingWindow {
         id: window
@@ -166,6 +185,17 @@ ShellRoot {
                                 model: ["Miniatury okien", "Tytuły okien"]
                                 Accessible.name: "Zawartość podglądów pulpitów"
                                 onActivated: root.edited()
+                            }
+                            Button {
+                                text: "Podgląd"
+                                enabled: !root.busy
+                                onClicked: {
+                                    const appearance = root.draft()
+                                    previewer.command = [root.launcher, "preview", JSON.stringify({backgroundOpacity: appearance.backgroundOpacity, previewMode: appearance.previewMode})]
+                                    root.previewStarting = true
+                                    root.message = "Otwieranie podglądu…"
+                                    previewer.running = true
+                                }
                             }
                         }
                     }
