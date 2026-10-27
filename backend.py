@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Workspace drag state and Hyprland IPC. stdout is a private JSON UI stream."""
+from collections import Counter
 import dataclasses
 import json
 import math
@@ -98,6 +99,34 @@ def monitor_for_rule(rule, monitors, fallback):
     return fallback if not wanted else None
 
 
+def load_workspace_blocks():
+    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+    try:
+        lines = (state / "omarchy/monitor-workspaces").read_text().splitlines()
+    except (OSError, UnicodeError):
+        return {}
+    entries = []
+    for line in lines:
+        fields = line.split("\t")
+        if len(fields) < 3 or not re.fullmatch(r"[0-9]+", fields[0]) or not normal_name(fields[1]) or fields[1] != fields[1].strip():
+            continue
+        try:
+            entries.append((fields[1], int(fields[0])))
+        except ValueError:
+            continue
+    connectors = Counter(connector for connector, _ in entries)
+    blocks = Counter(block for _, block in entries)
+    return {connector: block for connector, block in entries if connectors[connector] == 1 and blocks[block] == 1}
+
+
+def workspace_label(name, monitor, blocks):
+    if re.fullmatch(r"[1-9][0-9]*", name) and monitor in blocks:
+        number = int(name)
+        if (number - 1) // 10 == blocks[monitor]:
+            return str((number - 1) % 10 + 1)
+    return name
+
+
 def workspace_targets(monitors, workspaces, rules, config, fallback):
     targets = {}
     by_name = {m["name"]: m for m in monitors}
@@ -111,6 +140,8 @@ def workspace_targets(monitors, workspaces, rules, config, fallback):
         if any(char in name for char in "[]()"):
             continue
         if not rule.get("enabled", True) or not normal_name(name):
+            continue
+        if not (rule.get("monitor") or rule.get("persistent") or rule.get("default")):
             continue
         configured = True
         if name in targets:
@@ -217,6 +248,7 @@ class Controller:
         self.ended = {}
         self.restore = None
         self.config = load_config()
+        self.workspace_blocks = {}
 
     def publish(self, pointer=None):
         drag = self.drag
@@ -224,13 +256,17 @@ class Controller:
             self.emit({"state": "idle"})
             return
         hovered = target_at(drag.cards, drag.monitor, pointer or drag.origin)
+        source_workspace = drag.source.get("workspace", {}).get("name", "")
+        source_label = next((card.get("label", source_workspace) for card in drag.cards
+                             if card["name"] == source_workspace),
+                            workspace_label(source_workspace, drag.monitor["name"], self.workspace_blocks))
         self.emit({"state": "dragging", "token": drag.token, "screen": drag.monitor["name"],
                    "monitor": drag.monitor, "monitors": drag.monitors, "cards": drag.cards,
                    "groups": drag.groups, "source": drag.source.get("address", ""),
                    "sourceClient": {k: drag.source.get(k, "") for k in ("address", "class", "title", "size")},
                    "pointer": pointer_data(pointer or drag.origin, drag.monitor),
                    "backgroundOpacity": self.config["backgroundOpacity"], "previewMode": self.config["previewMode"],
-                   "sourceWorkspace": drag.source.get("workspace", {}).get("name", ""),
+                   "sourceWorkspace": source_workspace, "sourceWorkspaceLabel": source_label,
                    "clients": drag.clients, "hovered": hovered["name"] if hovered else "",
                    "zoom": self.config["zoom"], "rounding": self.config.get("rounding", 0),
                    "mode": drag.mode, "demo": drag.mode == "demo"})
@@ -273,6 +309,16 @@ class Controller:
     def dashboard_data(self, monitors, monitor, clients, config):
         visible_monitors = [m for m in monitors if m["name"] not in config["hiddenMonitors"] or m["name"] == monitor["name"]]
         targets = workspace_targets(visible_monitors, self.ipc.get("workspaces"), self.ipc.get("workspacerules"), config, monitor)
+        self.workspace_blocks = load_workspace_blocks()
+        for target in targets:
+            target["label"] = workspace_label(target["name"], target["monitor"], self.workspace_blocks)
+        monitor_order = {m["name"]: index for index, m in enumerate(visible_monitors)}
+        targets.sort(key=lambda target: (monitor_order[target["monitor"]],
+                                         (0, int(target["label"])) if target["label"].isdigit() else (1, target["label"])))
+        labels = Counter((target["monitor"], target["label"]) for target in targets)
+        for target in targets:
+            if labels[target["monitor"], target["label"]] > 1:
+                target["label"] += " (ID " + target["name"] + ")"
         cards, groups = layout_dashboard(targets, monitor, config)
         # Titles travel only over the local UI pipe and are never logged.
         previews = [{k: c[k] for k in ("address", "at", "size", "workspace", "monitor", "class", "title", "floating") if k in c}
@@ -372,6 +418,7 @@ class Controller:
     def demo(self):
         if self.drag:
             return
+        self.workspace_blocks = {}
         monitors = [logical_monitor(m) for m in self.ipc.get("monitors") if not m.get("disabled")]
         monitor = next((m for m in monitors if m.get("focused")), monitors[0])
         monitors = [m for m in monitors if m["name"] not in self.config["hiddenMonitors"] or m["name"] == monitor["name"]]

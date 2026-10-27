@@ -161,5 +161,32 @@ alone takes input until dismissed.
 - Installed on rogo with backup `20261027T235644.077460`; the resident process
   restarted and reported ready/idle. Installed sources match the reviewed diff.
   Existing config and shortcut remained byte-identical after installation.
-- Independent Sol review approved the diff with no findings. Live slider and
-  hover interaction has not yet been tested; awaiting an idle desktop interval.
+- Independent Sol review approved the diff with no findings.
+- Live verification on 2026-10-28: GUI sliders set unsaved preview size 51%
+  and 199%, with hover enlargement 135%. Preview showed visibly different card
+  sizes at both values; hovering a card enlarged it and highlighted its border.
+  Both previews closed with Escape. Config and shortcut stayed byte-identical.
+  Settings were closed without saving the test values. Captures remain outside Git.
+  The preview button was reachable by scrolling the settings panel.
+  This run did not repeat the persisted-settings GUI save test.
+
+## Per-monitor numbering — 2026-10-28
+
+- Live Omarchy bar source and monitor-workspaces TSV confirm per-monitor blocks:
+  eDP-1 owns block 0, DP-6 block 1, STUDIO-VIRTUAL block 2. Actual workspace 13
+  on DP-6 is local slot 3. Appearance rules for 12/13 do not declare empty targets.
+- Cards and source footer now separate display labels from dispatch identities.
+  Real guest workspaces remain on their actual monitors. Colliding labels include
+  both real IDs; regression tests cover guest 4 and own-block 14 on DP-6.
+- Live preview showed two monitor circles, workspace 3 on DP-6 with the actual
+  Parsec thumbnail, and no phantom workspace 12 on eDP-1. Preview closed to idle.
+  Final installed backend rechecked the same mapping against live Hyprland IPC.
+- Config and shortcut remained byte-identical; active workspaces stayed eDP-1=3,
+  DP-6=13, STUDIO-VIRTUAL=21. ChatGPT and Parsec stayed on 3 and 13.
+- Final installation backup: `20261028T002240.976719`. Installed source files
+  match the reviewed repository files. Resident service reports ready/idle.
+- 61 tests pass; independent Sol review approved the final collision fix.
+  Python compilation and diff checks pass. QML has no errors; its 62 warnings
+  are unchanged from the preceding revision. Graphify AST index updated.
+- No physical drag, creation of workspace 14, or reboot was performed in this
+  verification pass; routing to colliding targets is covered by IPC unit tests.

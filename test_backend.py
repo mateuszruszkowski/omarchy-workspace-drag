@@ -1,4 +1,7 @@
 import copy
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -36,6 +39,9 @@ class FakeIPC:
 
 class WorkspaceDragTests(unittest.TestCase):
     def setUp(self):
+        blocks = patch("backend.load_workspace_blocks", return_value={"eDP-1": 0, "DP-6": 1})
+        self.blocks = blocks.start()
+        self.addCleanup(blocks.stop)
         self.ipc = FakeIPC()
         self.time = 10
         self.output = []
@@ -213,6 +219,95 @@ class WorkspaceDragTests(unittest.TestCase):
         self.assertEqual([t["name"] for t in targets], ["1", "2", "4", "5"])
         self.assertEqual(targets[-1]["monitor"], "DP-6")
 
+    def test_incidental_rules_do_not_synthesize_phantom_targets(self):
+        self.ipc.data["workspacerules"] += [
+            {"workspaceString": "12", "enabled": True},
+            {"workspaceString": "13", "gapsOut": 0},
+            {"workspaceString": "7", "persistent": True},
+            {"workspaceString": "8", "default": True}]
+        self.begin()
+        self.assertEqual([c["name"] for c in self.controller.drag.cards], ["1", "2", "7", "8", "4", "5"])
+
+    def test_only_incidental_rules_preserve_configured_default_fallback(self):
+        monitors = [logical_monitor(m) for m in self.ipc.data["monitors"]]
+        targets = workspace_targets(monitors, self.ipc.data["workspaces"],
+                                    [{"workspaceString": "12", "enabled": True}],
+                                    DEFAULTS | {"defaultWorkspaces": [7]}, monitors[0])
+        self.assertEqual([c["name"] for c in targets], ["1", "7", "4"])
+
+    def test_local_label_preserves_dispatch_hover_and_thumbnail_identity(self):
+        self.ipc.data["workspaces"] += [{"id": 13, "name": "13", "monitor": "DP-6"},
+                                        {"id": 6, "name": "6", "monitor": "DP-6"}]
+        client = copy.deepcopy(self.ipc.data["clients"][0])
+        client.update(address="0xdef", workspace={"id": 13, "name": "13"}, monitor=1)
+        self.ipc.data["clients"].append(client)
+        self.begin()
+        card = next(c for c in self.controller.drag.cards if c["name"] == "13")
+        self.assertEqual(card["label"], "3")
+        external = [c for c in self.controller.drag.cards if c["monitor"] == "DP-6"]
+        self.assertEqual([(c["name"], c["label"]) for c in external], [("13", "3"), ("4", "4"), ("5", "5"), ("6", "6")])
+        guest = next(c for c in self.controller.drag.cards if c["name"] == "4")
+        self.assertEqual(guest["label"], "4")
+        self.assertEqual(next(c for c in self.output[-1]["clients"] if c["address"] == "0xdef")["workspace"]["name"], "13")
+        self.assertEqual(self.output[-1]["sourceWorkspace"], "1")
+        self.assertEqual(self.output[-1]["sourceWorkspaceLabel"], "1")
+        self.aim("13")
+        self.controller.tick()
+        self.assertEqual(self.output[-1]["hovered"], "13")
+        self.controller.finish("a")
+        self.assertIn('workspace="13",follow=false', self.ipc.dispatches[0])
+
+    def test_colliding_guest_and_local_labels_stay_distinct_and_dispatch_local_id(self):
+        self.ipc.data["workspaces"].append({"id": 14, "name": "14", "monitor": "DP-6"})
+        self.begin()
+        external = [c for c in self.controller.drag.cards if c["monitor"] == "DP-6"]
+        self.assertEqual([(c["name"], c["label"]) for c in external],
+                         [("4", "4 (ID 4)"), ("14", "4 (ID 14)"), ("5", "5")])
+        self.assertEqual(next(c for c in self.controller.drag.cards if c["name"] == "1")["label"], "1")
+        self.aim("14")
+        self.controller.finish("a")
+        self.assertIn('workspace="14",follow=false', self.ipc.dispatches[0])
+
+    def test_colliding_source_label_matches_card_and_dispatches_guest_id(self):
+        self.ipc.data["monitors"][1]["activeWorkspace"] = {"id": 14}
+        self.ipc.data["clients"][0].update(workspace={"id": 14, "name": "14"},
+                                             monitor=1, at=[1600, 0], size=[3440, 1440])
+        self.ipc.data["workspaces"].append({"id": 14, "name": "14", "monitor": "DP-6"})
+        self.ipc.data["cursorpos"] = {"x": 1800, "y": 400}
+        self.begin()
+        self.assertEqual(self.output[-1]["sourceWorkspace"], "14")
+        self.assertEqual(self.output[-1]["sourceWorkspaceLabel"], "4 (ID 14)")
+        self.assertEqual(self.output[-1]["sourceWorkspaceLabel"],
+                         next(c for c in self.controller.drag.cards if c["name"] == "14")["label"])
+        self.aim("4")
+        self.controller.finish("a")
+        self.assertIn('workspace="4",follow=false', self.ipc.dispatches[0])
+
+    def test_source_label_uses_source_monitor_and_keeps_global_identity(self):
+        self.ipc.data["monitors"][1]["activeWorkspace"] = {"id": 13}
+        self.ipc.data["clients"][0].update(workspace={"id": 13, "name": "13"},
+                                             monitor=1, at=[1600, 0], size=[3440, 1440])
+        self.ipc.data["workspaces"].append({"id": 13, "name": "13", "monitor": "DP-6"})
+        self.ipc.data["cursorpos"] = {"x": 1800, "y": 400}
+        self.begin()
+        self.assertEqual(self.output[-1]["sourceWorkspace"], "13")
+        self.assertEqual(self.output[-1]["sourceWorkspaceLabel"], "3")
+        self.aim("13")
+        self.controller.finish("a")
+        self.assertFalse(self.ipc.dispatches)
+
+    def test_preview_refreshes_blocks_and_preserves_named_and_guest_labels(self):
+        self.ipc.data["workspaces"] += [{"id": 13, "name": "13", "monitor": "DP-6"},
+                                        {"id": -1337, "name": "Praca Żółć", "monitor": "DP-6"}]
+        self.controller.preview("preview-a", {})
+        labels = {c["name"]: c["label"] for c in self.output[-1]["cards"]}
+        self.assertEqual(labels, {"1": "1", "2": "2", "4": "4", "5": "5", "13": "3", "Praca Żółć": "Praca Żółć"})
+        self.controller.finish("preview-a")
+        self.blocks.return_value = {}
+        self.controller.preview("preview-b", {})
+        self.assertEqual(next(c for c in self.output[-1]["cards"] if c["name"] == "13")["label"], "13")
+        self.assertEqual(self.blocks.call_count, 2)
+
     def test_demo_never_moves_real_windows(self):
         self.controller.demo()
         self.time += .5
@@ -231,7 +326,7 @@ class WorkspaceDragTests(unittest.TestCase):
             self.assertEqual(data["previewMode"], "titles")
             self.assertEqual(data["zoom"], 1.3)
             expected, _ = layout_dashboard(
-                [dict(name=c["name"], monitor=c["monitor"], existing=c["existing"]) for c in data["cards"]],
+                [dict(name=c["name"], label=c["label"], monitor=c["monitor"], existing=c["existing"]) for c in data["cards"]],
                 self.controller.drag.monitor, self.controller.config)
             self.assertEqual(data["cards"], expected)
             self.assertEqual(self.controller.config["cardScale"], 1.7)
@@ -388,6 +483,33 @@ class WorkspaceDragTests(unittest.TestCase):
         self.controller.tick()
         self.assertEqual(self.ipc.dispatches, ["hl.dispatch(hl.dsp.cursor.move({x=600,y=400}))"])
         self.assertFalse(self.ipc.requests)
+
+
+class WorkspaceBlockTests(unittest.TestCase):
+    def test_map_loader_handles_missing_malformed_and_ambiguous_entries(self):
+        from backend import load_workspace_blocks, workspace_label
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"XDG_STATE_HOME": directory}):
+            state = Path(directory) / "omarchy" / "monitor-workspaces"
+            self.assertEqual(load_workspace_blocks(), {})
+            state.parent.mkdir()
+            state.write_text("0\teDP-1\tLaptop\n1\tDP-6\tExternal\n2\tSTUDIO-VIRTUAL\tVirtual\n")
+            self.assertEqual(load_workspace_blocks(), {"eDP-1": 0, "DP-6": 1, "STUDIO-VIRTUAL": 2})
+            self.assertEqual(workspace_label("13", "DP-6", load_workspace_blocks()), "3")
+            state.write_text("bogus\tDP-6\tExternal\n-1\teDP-1\tLaptop\n2\t\tBlank\n3\tIncomplete\n")
+            self.assertEqual(load_workspace_blocks(), {})
+            self.assertEqual(workspace_label("13", "DP-6", load_workspace_blocks()), "13")
+            state.write_text("0\teDP-1\tLaptop\n1\tDP-6\tExternal\n2\tDP-6\tDuplicate\n0\tOTHER\tDuplicate block\n")
+            self.assertEqual(load_workspace_blocks(), {})
+
+    def test_labels_change_only_numeric_workspaces_in_the_monitors_own_block(self):
+        from backend import workspace_label
+        blocks = {"eDP-1": 0, "DP-6": 1}
+        for name, monitor, expected in [("13", "DP-6", "3"), ("20", "DP-6", "10"),
+                                         ("1", "eDP-1", "1"), ("4", "DP-6", "4"),
+                                         ("13", "eDP-1", "13"), ("13", "UNKNOWN", "13"),
+                                         ("0", "eDP-1", "0"), ("Praca", "DP-6", "Praca")]:
+            with self.subTest(name=name, monitor=monitor):
+                self.assertEqual(workspace_label(name, monitor, blocks), expected)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,13 @@
 Hold **Super+Alt+left mouse button** over a normal window. The source display shows
 normal workspaces arranged in separate circles around each monitor label.
 Existing workspaces and individually configured empty workspaces are included.
+When Omarchy provides its per-monitor block map, workspace cards use local slot
+numbers: for example, Hyprland workspace 13 is shown as workspace 3 on the monitor
+that owns block 11–20. Real workspace names still identify previews and drop
+targets. If two real targets share a displayed number on one monitor, their
+labels include the internal ID to distinguish them. Existing guest workspaces remain on their actual monitor. Empty targets
+are declared by monitor, persistent or default rules; appearance-only rules do
+not create extra cards. Without a usable block mapping, labels retain real names.
 The dimmed desktop remains visible behind the overview. A small dragged-window
 preview follows the pointer. The virtual STUDIO-VIRTUAL output is hidden by default;
 its group is included when it is the source display. Move to a preview and release the mouse

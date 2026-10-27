@@ -172,7 +172,7 @@ ShellRoot {
             Text {
                 textFormat: Text.PlainText
                 anchors { right: parent.right; bottom: parent.bottom; margins: 24 }
-                text: root.previewing ? (root.polish ? "Niezapisany wygląd · Automatyczne zamknięcie" : "Unsaved appearance · Closes automatically") : root.dashboard.demo ? "DEMO · " + (root.polish ? "Dane syntetyczne · Automatyczne zamknięcie" : "Synthetic data · Closes automatically") : (root.polish ? "Pulpit źródłowy " : "Source workspace ") + (root.dashboard.sourceWorkspace || "")
+                text: root.previewing ? (root.polish ? "Niezapisany wygląd · Automatyczne zamknięcie" : "Unsaved appearance · Closes automatically") : root.dashboard.demo ? "DEMO · " + (root.polish ? "Dane syntetyczne · Automatyczne zamknięcie" : "Synthetic data · Closes automatically") : (root.polish ? "Pulpit źródłowy " : "Source workspace ") + (root.dashboard.sourceWorkspaceLabel || root.dashboard.sourceWorkspace || "")
                 color: root.foreground; opacity: 0.65; font.pixelSize: 13
             }
             Button {
@@ -249,7 +249,7 @@ ShellRoot {
                         textFormat: Text.PlainText
                         x: 12; y: 9
                         width: parent.width - 24; elide: Text.ElideRight
-                        text: (root.polish ? "Pulpit " : "Workspace ") + card.modelData.name + (root.dashboard.sourceWorkspace === card.modelData.name ? "  ●" : "")
+                        text: (root.polish ? "Pulpit " : "Workspace ") + (card.modelData.label || card.modelData.name) + (root.dashboard.sourceWorkspace === card.modelData.name ? "  ●" : "")
                         color: root.foreground; font.pixelSize: 14; font.bold: true
                     }
                     Text {
