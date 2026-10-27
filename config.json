@@ -2,6 +2,7 @@
   "groupColumns": 0,
   "cardWidth": 230,
   "cardHeight": 150,
+  "cardScale": 1,
   "gap": 24,
   "zoom": 1.15,
   "backgroundOpacity": 0.72,

@@ -26,7 +26,7 @@ ShellRoot {
         return match ? match[1] : fallback
     }
     function draft() {
-        return {modifiers: [superKey.checked ? "SUPER" : "", altKey.checked ? "ALT" : "", ctrlKey.checked ? "CTRL" : "", shiftKey.checked ? "SHIFT" : ""].filter(x => x !== ""), mouseButton: ["left", "right", "middle"][mouse.currentIndex], backgroundOpacity: Math.round(dimming.value) / 100, previewMode: previews.currentIndex === 0 ? "thumbnails" : "titles"}
+        return {modifiers: [superKey.checked ? "SUPER" : "", altKey.checked ? "ALT" : "", ctrlKey.checked ? "CTRL" : "", shiftKey.checked ? "SHIFT" : ""].filter(x => x !== ""), mouseButton: ["left", "right", "middle"][mouse.currentIndex], backgroundOpacity: Math.round(dimming.value) / 100, previewMode: previews.currentIndex === 0 ? "thumbnails" : "titles", cardScale: Math.round(cardScale.value) / 100, zoom: Math.round(hoverZoom.value) / 100}
     }
     function populate(data) {
         superKey.checked = data.modifiers.indexOf("SUPER") >= 0
@@ -34,6 +34,8 @@ ShellRoot {
         ctrlKey.checked = data.modifiers.indexOf("CTRL") >= 0
         shiftKey.checked = data.modifiers.indexOf("SHIFT") >= 0
         mouse.currentIndex = ["left", "right", "middle"].indexOf(data.mouseButton)
+        cardScale.value = Math.round(data.cardScale * 100)
+        hoverZoom.value = Math.round(data.zoom * 100)
         dimming.value = Math.round(data.backgroundOpacity * 100)
         previews.currentIndex = data.previewMode === "thumbnails" ? 0 : 1
     }
@@ -178,6 +180,23 @@ ShellRoot {
                                 onMoved: root.edited()
                             }
                             Label { text: "Mniej = bardziej przezroczyste tło. Więcej = ciemniejszy pulpit."; wrapMode: Text.WordWrap; Layout.fillWidth: true; opacity: 0.75 }
+                            Label { text: "Rozmiar podglądów pulpitów: " + Math.round(cardScale.value) + "%" }
+                            Slider {
+                                id: cardScale
+                                Layout.fillWidth: true
+                                from: 50; to: 200; stepSize: 1; value: 100
+                                Accessible.name: "Rozmiar podglądów pulpitów w procentach"
+                                onMoved: root.edited()
+                            }
+                            Label { text: "Układ automatycznie dopasowuje się do dostępnego miejsca na ekranie."; wrapMode: Text.WordWrap; Layout.fillWidth: true; opacity: 0.75 }
+                            Label { text: "Powiększenie po najechaniu: " + Math.round(hoverZoom.value) + "%" }
+                            Slider {
+                                id: hoverZoom
+                                Layout.fillWidth: true
+                                from: 100; to: 135; stepSize: 1; value: 115
+                                Accessible.name: "Powiększenie po najechaniu w procentach"
+                                onMoved: root.edited()
+                            }
                             Label { text: "Zawartość podglądów" }
                             ComboBox {
                                 id: previews
@@ -191,7 +210,7 @@ ShellRoot {
                                 enabled: !root.busy
                                 onClicked: {
                                     const appearance = root.draft()
-                                    previewer.command = [root.launcher, "preview", JSON.stringify({backgroundOpacity: appearance.backgroundOpacity, previewMode: appearance.previewMode})]
+                                    previewer.command = [root.launcher, "preview", JSON.stringify({backgroundOpacity: appearance.backgroundOpacity, previewMode: appearance.previewMode, cardScale: appearance.cardScale, zoom: appearance.zoom})]
                                     root.previewStarting = true
                                     root.message = "Otwieranie podglądu…"
                                     previewer.running = true
@@ -223,7 +242,7 @@ ShellRoot {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Button { text: "Domyślne"; enabled: root.saved !== null && !root.busy; onClicked: { root.populate({modifiers: ["SUPER", "ALT"], mouseButton: "left", backgroundOpacity: 0.72, previewMode: "thumbnails"}); root.edited() } }
+                Button { text: "Domyślne"; enabled: root.saved !== null && !root.busy; onClicked: { root.populate({modifiers: ["SUPER", "ALT"], mouseButton: "left", backgroundOpacity: 0.72, previewMode: "thumbnails", cardScale: 1, zoom: 1.15}); root.edited() } }
                 Button { text: "Wczytaj ponownie"; enabled: !root.busy; onClicked: { root.phase = "loading"; root.message = "Wczytywanie ustawień…"; reader.running = true } }
                 Item { Layout.fillWidth: true }
             }

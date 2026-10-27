@@ -59,6 +59,32 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(config["backgroundOpacity"], .72)
         self.assertTrue(Path(result["backup"], "config.json").exists())
 
+    def test_size_and_hover_roundtrip_preserves_custom_dimensions_and_other_config(self):
+        config_path = self.root / "config.json"
+        config = json.loads(config_path.read_text())
+        config.update(cardWidth=320, cardHeight=180, gap=31)
+        config_path.write_text(json.dumps(config))
+        draft, _ = settings.read_settings(self.root)
+        self.assertEqual((draft["cardScale"], draft["zoom"]), (1, 1.15))
+        for scale, zoom in ((.5, 1), (1.43, 1.27), (2, 1.35)):
+            with self.subTest(scale=scale, zoom=zoom):
+                draft.update(cardScale=scale, zoom=zoom)
+                calls = []
+                settings.apply_settings(draft, self.root, lambda *args: calls.append(args))
+                self.assertEqual(settings.read_settings(self.root)[0], draft)
+                self.assertEqual(calls, [])
+                stored = json.loads(config_path.read_text())
+                self.assertEqual({key: stored[key] for key in config}, config)
+
+    def test_invalid_size_and_hover_are_rejected_before_writes(self):
+        original = (self.root / "config.json").read_bytes()
+        for key, outside in (("cardScale", (.49, 2.01)), ("zoom", (.99, 1.36))):
+            for value in (*outside, True, False, float("nan"), float("inf"), -float("inf"), "1", None):
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    settings.apply_settings({**settings.DEFAULTS, key: value}, self.root)
+                self.assertEqual((self.root / "config.json").read_bytes(), original)
+        self.assertFalse((self.root / "settings-backups").exists())
+
     def test_live_conflict_leaves_files_unchanged(self):
         original = (self.root / "config.json").read_bytes()
         draft = {**settings.DEFAULTS, "modifiers": ["SUPER"]}

@@ -68,13 +68,17 @@ and plugin files are preserved.
 
 The Polish settings window provides Super, Alt, Ctrl and Shift checkboxes, a
 left/right/middle mouse selector, a backdrop dimming slider and a choice between
-window thumbnails and window titles. The shortcut summary updates while editing.
+window thumbnails and window titles. Two additional sliders control workspace
+preview size (50–200%) and hover enlargement (100–135%). Size scales both
+dimensions together, preserving custom card proportions. The overview still fits
+the available display, so large settings may be constrained by screen space.
+The shortcut summary updates while editing.
 At least one modifier is required. **Domyślne** resets only the displayed draft.
 **Zapisz i zastosuj** writes it; **Wczytaj ponownie** discards the draft and reads
 the current saved settings. Closing the window discards unsaved edits.
 
 **Podgląd** opens the actual workspace overview using the current dimming and
-preview-mode controls, including unsaved edits. It displays real windows without
+preview-mode, preview-size and hover-enlargement controls, including unsaved edits. It displays real windows without
 grabbing one. **Zamknij podgląd** or Escape returns to the unchanged settings
 draft. The configured timeout also closes it. Preview neither saves settings nor
 moves windows, switches workspaces or restores the pointer. A running drag must
@@ -104,6 +108,7 @@ preserves fields it does not edit. They load at the next drag without restart.
 | --- | --- | --- |
 | `groupColumns` | 0 | Monitor circles per row. Zero chooses the largest fitting layout automatically. |
 | `cardWidth`, `cardHeight` | 230, 150 | Logical card size before fitting the source display. |
+| `cardScale` | 1.0 | Workspace preview size multiplier, 0.5–2.0, applied before fitting the source display. |
 | `gap` | 24 | Space between slots. |
 | `zoom` | 1.15 | Hover scale from 1.0 to 1.35. |
 | `backgroundOpacity` | 0.72 | Dimmed theme backdrop opacity. The desktop remains visible underneath. |

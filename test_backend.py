@@ -157,6 +157,33 @@ class WorkspaceDragTests(unittest.TestCase):
                         for x2, y2, w2, h2 in bounds[i + 1:]:
                             self.assertFalse(x < x2 + w2 and x2 < x + w and y < y2 + h2 and y2 < y + h)
 
+    def test_card_scale_preserves_custom_ratio_and_changes_requested_size(self):
+        targets = [dict(name="1", monitor="monitor-1")]
+        monitor = dict(logicalWidth=12000, logicalHeight=8000)
+        for scale in (.5, 1, 2):
+            with self.subTest(scale=scale):
+                cards, _ = layout_dashboard(targets, monitor, DEFAULTS | {
+                    "cardWidth": 320, "cardHeight": 180, "cardScale": scale})
+                self.assertAlmostEqual(cards[0]["width"], 320 * scale)
+                self.assertAlmostEqual(cards[0]["height"], 180 * scale)
+
+    def test_scaled_cards_still_fit_monitor_with_maximum_hover_zoom(self):
+        targets = [dict(name=f"{group}-{i}", monitor=f"monitor-{group}")
+                   for group in range(3) for i in range(12)]
+        for scale in (.5, 1, 2):
+            config = DEFAULTS | {"cardScale": scale, "zoom": 1.35}
+            cards, _ = layout_dashboard(targets, dict(logicalWidth=1600, logicalHeight=1000), config)
+            bounds = [(c["x"] - c["width"] * .35 / 2,
+                       c["y"] - c["height"] * .35 / 2,
+                       c["width"] * 1.35, c["height"] * 1.35) for c in cards]
+            for i, (x, y, w, h) in enumerate(bounds):
+                self.assertGreaterEqual(x, 39.9)
+                self.assertGreaterEqual(y, 109.9)
+                self.assertLessEqual(x + w, 1560.1)
+                self.assertLessEqual(y + h, 940.1)
+                for x2, y2, w2, h2 in bounds[i + 1:]:
+                    self.assertFalse(x < x2 + w2 and x2 < x + w and y < y2 + h2 and y2 < y + h)
+
     def test_hidden_virtual_monitor_is_omitted_but_source_is_always_visible(self):
         virtual = copy.deepcopy(self.ipc.data["monitors"][1])
         virtual.update(id=2, name="STUDIO-VIRTUAL", x=5040)
@@ -194,7 +221,7 @@ class WorkspaceDragTests(unittest.TestCase):
         self.assertFalse(self.controller.drag)
 
     def test_preview_uses_real_workspaces_clients_and_draft_appearance(self):
-        appearance = {"backgroundOpacity": .34, "previewMode": "titles"}
+        appearance = {"backgroundOpacity": .34, "previewMode": "titles", "cardScale": 1.7, "zoom": 1.3}
         with patch("pathlib.Path.write_text", side_effect=AssertionError("preview wrote a file")):
             self.assertTrue(self.controller.preview("preview-a", appearance))
             data = self.output[-1]
@@ -202,6 +229,12 @@ class WorkspaceDragTests(unittest.TestCase):
             self.assertFalse(data["demo"])
             self.assertEqual(data["backgroundOpacity"], .34)
             self.assertEqual(data["previewMode"], "titles")
+            self.assertEqual(data["zoom"], 1.3)
+            expected, _ = layout_dashboard(
+                [dict(name=c["name"], monitor=c["monitor"], existing=c["existing"]) for c in data["cards"]],
+                self.controller.drag.monitor, self.controller.config)
+            self.assertEqual(data["cards"], expected)
+            self.assertEqual(self.controller.config["cardScale"], 1.7)
             self.assertEqual(data["source"], "")
             self.assertEqual(data["sourceWorkspace"], "")
             self.assertEqual([c["name"] for c in data["cards"]], ["1", "2", "4", "5"])
@@ -231,22 +264,28 @@ class WorkspaceDragTests(unittest.TestCase):
                 self.assertFalse(self.ipc.requests)
 
     def test_preview_reloads_saved_config_and_next_drag_discards_draft(self):
-        saved = DEFAULTS | {"backgroundOpacity": .8, "previewMode": "thumbnails", "cardWidth": 345}
+        saved = DEFAULTS | {"backgroundOpacity": .8, "previewMode": "thumbnails", "cardWidth": 345, "cardScale": .8, "zoom": 1.1}
         self.controller.config = DEFAULTS | {"cardWidth": 123}
         with patch("backend.load_config", side_effect=lambda: saved.copy()):
-            self.controller.preview("preview-a", {"backgroundOpacity": .22, "previewMode": "titles"})
+            self.controller.preview("preview-a", {"backgroundOpacity": .22, "previewMode": "titles", "cardScale": 2, "zoom": 1.35})
             self.assertEqual(self.controller.config["cardWidth"], 345)
             self.assertEqual(self.controller.config["backgroundOpacity"], .22)
             self.controller.finish("preview-a", cancel=True)
             self.begin()
         self.assertEqual(self.controller.config["backgroundOpacity"], .8)
         self.assertEqual(self.controller.config["previewMode"], "thumbnails")
+        self.assertEqual(self.controller.config["cardScale"], .8)
+        self.assertEqual(self.controller.config["zoom"], 1.1)
+        self.assertEqual(saved["cardScale"], .8)
+        self.assertEqual(saved["zoom"], 1.1)
         self.assertEqual(saved["backgroundOpacity"], .8)
 
     def test_invalid_preview_does_not_replace_active_drag(self):
         invalid = (None, [], {"backgroundOpacity": True}, {"backgroundOpacity": float("nan")},
                            {"backgroundOpacity": float("inf")}, {"backgroundOpacity": .09},
                            {"backgroundOpacity": 1.01}, {"previewMode": "unknown"}, {"restoreCursor": False})
+        invalid += tuple({key: value} for key, outside in (("cardScale", (.49, 2.01)), ("zoom", (.99, 1.36)))
+                         for value in (*outside, True, False, float("nan"), float("inf"), -float("inf"), "1", None))
         for appearance in invalid:
             self.assertFalse(self.controller.preview("invalid", appearance))
             self.assertIsNone(self.controller.drag)
@@ -260,6 +299,18 @@ class WorkspaceDragTests(unittest.TestCase):
         self.controller.demo()
         self.assertIs(self.controller.drag, original)
         self.assertFalse(self.ipc.dispatches)
+
+    def test_preview_accepts_partial_size_and_hover_at_range_limits(self):
+        saved = DEFAULTS.copy()
+        for appearance in ({"cardScale": .5}, {"cardScale": 2}, {"zoom": 1}, {"zoom": 1.35}):
+            with self.subTest(appearance=appearance), patch("backend.load_config", return_value=saved.copy()):
+                self.assertTrue(self.controller.preview("partial", appearance))
+                self.assertEqual(self.controller.config["cardScale"], appearance.get("cardScale", saved["cardScale"]))
+                self.assertEqual(self.controller.config["zoom"], appearance.get("zoom", saved["zoom"]))
+                self.controller.finish("partial", cancel=True)
+        self.assertEqual(saved, DEFAULTS)
+        self.assertFalse(self.ipc.dispatches)
+        self.assertFalse(self.ipc.requests)
 
     def test_preview_prevents_drag_start_and_supports_empty_clients(self):
         self.ipc.data["clients"] = []

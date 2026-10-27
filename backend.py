@@ -13,7 +13,7 @@ import time
 
 ROOT = Path(__file__).parent
 DEFAULTS = {"groupColumns": 0, "cardWidth": 230, "cardHeight": 150, "gap": 24,
-            "zoom": 1.15, "backgroundOpacity": .72, "previewMode": "thumbnails",
+            "cardScale": 1, "zoom": 1.15, "backgroundOpacity": .72, "previewMode": "thumbnails",
             "hiddenMonitors": ["STUDIO-VIRTUAL"], "timeoutSeconds": 25, "pollMilliseconds": 35,
             "restoreCursor": True, "defaultWorkspaces": list(range(1, 11))}
 
@@ -26,7 +26,7 @@ def load_config():
         pass
     for key, low, high in [("groupColumns", 0, 10), ("cardWidth", 120, 600),
                             ("cardHeight", 90, 400), ("gap", 12, 80),
-                            ("zoom", 1, 1.35), ("backgroundOpacity", 0.1, 1), ("timeoutSeconds", 2, 120),
+                            ("cardScale", .5, 2), ("zoom", 1, 1.35), ("backgroundOpacity", 0.1, 1), ("timeoutSeconds", 2, 120),
                             ("pollMilliseconds", 20, 200)]:
         value = config.get(key)
         config[key] = min(high, max(low, float(value))) if isinstance(value, (int, float)) and math.isfinite(value) else DEFAULTS[key]
@@ -137,7 +137,9 @@ def layout_dashboard(targets, monitor, config):
         group["cards"].append(dict(target))
     if not groups:
         return [], []
-    card_w, card_h, gap = config["cardWidth"], config["cardHeight"], config["gap"]
+    card_w = config["cardWidth"] * config["cardScale"]
+    card_h = config["cardHeight"] * config["cardScale"]
+    gap = config["gap"]
     zoom = config["zoom"]
     for group in groups:
         points = [(math.cos(-math.pi / 2 + 2 * math.pi * i / len(group["cards"])),
@@ -279,10 +281,11 @@ class Controller:
         return cards, groups, previews
 
     def preview(self, token, appearance):
-        valid = isinstance(appearance, dict) and not (appearance.keys() - {"backgroundOpacity", "previewMode"})
-        if valid and "backgroundOpacity" in appearance:
-            opacity = appearance["backgroundOpacity"]
-            valid = type(opacity) in (int, float) and math.isfinite(opacity) and .1 <= opacity <= 1
+        valid = isinstance(appearance, dict) and not (appearance.keys() - {"backgroundOpacity", "previewMode", "cardScale", "zoom"})
+        for key, low, high in (("backgroundOpacity", .1, 1), ("cardScale", .5, 2), ("zoom", 1, 1.35)):
+            if valid and key in appearance:
+                value = appearance[key]
+                valid = type(value) in (int, float) and math.isfinite(value) and low <= value <= high
         if valid and "previewMode" in appearance:
             valid = appearance["previewMode"] in ("thumbnails", "titles")
         if not valid or self.drag:

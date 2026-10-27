@@ -147,3 +147,19 @@ The close button is implemented alongside Escape; the live quiet-interval checks
 used Escape. This change did not repeat physical mouse drag or reboot tests.
 Existing gestures retain a click-through layer without keyboard focus; preview
 alone takes input until dismissed.
+
+## Workspace size and hover controls — 2026-10-27
+
+- Added preview size 50–200% and hover enlargement 100–135% to the settings
+  draft, defaults, validation, persistence and unsaved Preview request.
+- `cardScale` preserves existing custom card dimensions and aspect ratio.
+  Fit-to-screen remains active and is explained next to the size control.
+- Full local discovery: 52 tests pass. Coverage includes numeric rejection,
+  persistence with custom dimensions, preview boundaries, resetting draft
+  appearance on the next drag, sparse-layout scale and dense-layout fit at
+  maximum hover enlargement. Python compilation, QML lint and diff checks pass.
+- Installed on rogo with backup `20261027T235644.077460`; the resident process
+  restarted and reported ready/idle. Installed sources match the reviewed diff.
+  Existing config and shortcut remained byte-identical after installation.
+- Independent Sol review approved the diff with no findings. Live slider and
+  hover interaction has not yet been tested; awaiting an idle desktop interval.

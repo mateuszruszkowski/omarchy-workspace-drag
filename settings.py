@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read and apply the four settings exposed by the local graphical panel."""
+"""Read and apply the settings exposed by the local graphical panel."""
 import argparse
 from datetime import datetime
 import hashlib
@@ -15,7 +15,7 @@ ROOT = Path(__file__).parent
 MODIFIERS = {"SUPER": 64, "ALT": 8, "CTRL": 4, "SHIFT": 1}
 BUTTONS = {"left": 272, "right": 273, "middle": 274}
 DEFAULTS = {"modifiers": ["SUPER", "ALT"], "mouseButton": "left",
-            "backgroundOpacity": .72, "previewMode": "thumbnails"}
+            "backgroundOpacity": .72, "previewMode": "thumbnails", "cardScale": 1, "zoom": 1.15}
 OWN_DESCRIPTIONS = {"Workspace overview drag", "Drop window on workspace"}
 LEGACY_HASH = "eb2a136a2eb54d2a2b0696e38098beee54a05c50cf93a8cdd0a2acfb51f006d4"
 MANAGED_MARKER = "-- workspace-drag managed shortcut data v1"
@@ -34,6 +34,11 @@ def validate(draft):
     opacity = draft["backgroundOpacity"]
     if type(opacity) not in (int, float) or not math.isfinite(opacity) or not .1 <= opacity <= 1:
         raise ValueError("Przyciemnienie musi wynosić od 10 do 100%.")
+    for key, low, high, message in (("cardScale", .5, 2, "Rozmiar podglądów musi wynosić od 50 do 200%."),
+                                    ("zoom", 1, 1.35, "Powiększenie po najechaniu musi wynosić od 100 do 135%.")):
+        value = draft[key]
+        if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high:
+            raise ValueError(message)
     if draft["previewMode"] not in ("thumbnails", "titles"):
         raise ValueError("Nieprawidłowy tryb podglądu.")
     return {**draft, "modifiers": [m for m in MODIFIERS if m in mods]}
@@ -75,7 +80,7 @@ def read_settings(root=ROOT):
         data.update(parse_shortcut(shortcut_path.read_text()))
     else:
         data.update(legacy_shortcut((root / "bindings.lua").read_text()))
-    data.update({k: config.get(k, DEFAULTS[k]) for k in ("backgroundOpacity", "previewMode")})
+    data.update({k: config.get(k, DEFAULTS[k]) for k in ("backgroundOpacity", "previewMode", "cardScale", "zoom")})
     return validate(data), config
 
 
@@ -133,7 +138,7 @@ def apply_settings(draft, root=ROOT, run=hyprctl):
         if MANAGED_MARKER not in (root / "bindings.lua").read_text():
             raise ValueError("Najpierw zaktualizuj dodatek instalatorem, aby włączyć graficzną zmianę skrótu.")
         check_conflicts(draft, json.loads(run("-j", "binds")))
-    config.update({k: draft[k] for k in ("backgroundOpacity", "previewMode")})
+    config.update({k: draft[k] for k in ("backgroundOpacity", "previewMode", "cardScale", "zoom")})
     updates = {root / "config.json": (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode()}
     if changing_shortcut:
         updates[root / "shortcut.conf"] = (shortcut(draft) + "\n").encode()
