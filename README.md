@@ -39,7 +39,10 @@ commits the highlighted destination. Release the modifiers or press Escape to
 cancel. All modes show the same five base slots per mapped monitor plus existing
 workspaces. Extra empty slots are not synthesized for keyboard shortcuts. The source workspace has
 a persistent accent border and the label **Tu jest okno**. In keyboard mode,
-the target monitor has a bright ring and a **Wybrany monitor** label. Each
+the target monitor has a bright ring and a **Wybrany monitor** label. Monitor
+headings and card footers use readable names: **Ekran laptopa** for the built-in
+display and **iiyama** for the detected iiyama manufacturer. Connector/model details
+remain secondary; dispatch still uses the original monitor identifier. Each
 actionable numbered card shows its digit in a keycap; keycaps on the selected
 monitor are highlighted, while other monitors keep subdued hints. Slot 10 shows
 **0**. Disabled cards and names without a direct numeric shortcut have no digit

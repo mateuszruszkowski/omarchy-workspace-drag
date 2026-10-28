@@ -74,6 +74,12 @@ ShellRoot {
         for (let i = 0; i < monitors.length; i++) if (monitors[i].name === name) return monitors[i]
         return {x: 0, y: 0, logicalWidth: 1920, logicalHeight: 1080}
     }
+    function monitorLabel(name) {
+        const monitor = monitorData(name)
+        if (/^(?:eDP|LVDS|DSI)(?:-|$)/i.test(name)) return polish ? "Ekran laptopa" : "Laptop screen"
+        if (String(monitor.make || "").toLowerCase().indexOf("iiyama") >= 0) return "iiyama"
+        return monitor.model || name
+    }
     function clientsFor(name) {
         return (dashboard.clients || []).filter(function(c) { return c.workspace.name === name })
     }
@@ -265,18 +271,20 @@ ShellRoot {
                             textFormat: Text.PlainText
                             width: parent.width - 12 * monitorGroup.labelScale
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: monitorGroup.modelData.monitor
+                            text: root.monitorLabel(monitorGroup.modelData.monitor)
                             color: monitorGroup.selectedTarget ? root.accent : root.foreground
                             horizontalAlignment: Text.AlignHCenter
                             elide: Text.ElideRight
-                            font.pixelSize: 16 * monitorGroup.labelScale
+                            font.pixelSize: 16
+                            fontSizeMode: Text.HorizontalFit
+                            minimumPixelSize: Math.max(8, Math.round(12 * monitorGroup.labelScale))
                             font.bold: true
                         }
                         Text {
                             textFormat: Text.PlainText
                             width: parent.width - 12 * monitorGroup.labelScale
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: root.monitorData(monitorGroup.modelData.monitor).model || "MONITOR"
+                            text: monitorGroup.modelData.monitor + (root.monitorData(monitorGroup.modelData.monitor).model ? " · " + root.monitorData(monitorGroup.modelData.monitor).model : "")
                             color: root.foreground; opacity: .65
                             horizontalAlignment: Text.AlignHCenter
                             elide: Text.ElideRight
@@ -348,7 +356,7 @@ ShellRoot {
                     Text {
                         textFormat: Text.PlainText
                         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 9 }
-                        text: card.modelData.disabled ? (root.polish ? "Niedostępny: pulpit na innym monitorze" : "Unavailable: workspace on another monitor") : card.sourceWorkspace ? (root.polish ? "Tu jest okno" : "Window source") + " · " + card.modelData.monitor : card.modelData.monitor
+                        text: card.modelData.disabled ? (root.polish ? "Niedostępny: pulpit na innym monitorze" : "Unavailable: workspace on another monitor") : card.sourceWorkspace ? (root.polish ? "Tu jest okno" : "Window source") + " · " + root.monitorLabel(card.modelData.monitor) : root.monitorLabel(card.modelData.monitor)
                         elide: Text.ElideRight
                         color: card.sourceWorkspace ? root.accent : root.foreground
                         opacity: card.sourceWorkspace ? 1 : .65

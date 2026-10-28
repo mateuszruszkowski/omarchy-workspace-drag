@@ -288,3 +288,12 @@ Animation timing was not measured with frame instrumentation.
   numeric hints and source footer remained distinct. No windows were moved.
 - Resident QML loads without runtime errors. qmllint exits0 with unqualified
   access warnings. Installation backup: `20261028T024334.772240`.
+
+## Readable monitor names — 2026-10-28
+
+- Live monitor metadata identifies eDP-1 as the internal panel and DP-6 as
+  iiyama Corporation PL3467WQ. Display aliases are Ekran laptopa and iiyama.
+- Native keyboard overview screenshot on DP-6 confirms both center names and
+  matching card footers, with connector/model secondary and the selected iiyama
+  ring/keycaps distinct. Selection/dispatch identities are unchanged.
+- qmllint and diff checks pass. Backup: `20261028T024605.019314`. No windows moved.
