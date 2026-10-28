@@ -275,3 +275,16 @@ Animation timing was not measured with frame instrumentation.
   installer migration. No backend or QML movement logic changed.
 - Backup `20261028T023605.003879`; temporary instrumentation removed, installed
   bindings match source, test window and input daemon closed.
+
+## Target monitor and numeric key hints — 2026-10-28
+
+- QML-only behavior change uses the existing selectedMonitor and workspace labels.
+  Selected monitor gets an accent ring, center plate and label. Keyboard cards
+  show 1–9 or 0 for exact slot10; unavailable/nonnumeric cards show no keycap.
+- Live installed keyboard overview on eDP-1 showed accent keycaps1–5 on eDP-1
+  and subdued1–5 on DP-6. IPC monitor navigation moved the ring, center label
+  and keycap emphasis to DP-6 while the source marker stayed on eDP-1 workspace3.
+- Both screenshots were inspected on the mixed-scale layout. Titles, captures,
+  numeric hints and source footer remained distinct. No windows were moved.
+- Resident QML loads without runtime errors. qmllint exits0 with unqualified
+  access warnings. Installation backup: `20261028T024334.772240`.

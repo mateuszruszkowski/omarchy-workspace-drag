@@ -223,46 +223,76 @@ ShellRoot {
             Repeater {
                 model: root.active ? root.dashboard.groups : []
                 delegate: Item {
+                    id: monitorGroup
                     required property var modelData
+                    readonly property bool selectedTarget: root.keyboardOverview && root.dashboard.selectedMonitor === modelData.monitor
+                    readonly property real labelScale: modelData.labelHeight / 96
                     x: modelData.center.x; y: modelData.center.y
                     Rectangle {
                         x: -parent.modelData.radius; y: -parent.modelData.radius
                         width: parent.modelData.radius * 2; height: width
                         radius: width / 2
                         color: "transparent"
-                        border.width: 1
-                        border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, .28)
+                        border.width: monitorGroup.selectedTarget ? 3 : 1
+                        border.color: monitorGroup.selectedTarget ? root.accent : Qt.rgba(root.accent.r, root.accent.g, root.accent.b, .28)
+                        Behavior on border.color { ColorAnimation { duration: root.hoverDuration; easing.type: Easing.OutCubic } }
                     }
-                    Column {
+                    Rectangle {
                         x: -parent.modelData.labelWidth / 2
                         y: -parent.modelData.labelHeight / 2
                         width: parent.modelData.labelWidth
-                        spacing: 5
+                        height: parent.modelData.labelHeight
+                        visible: monitorGroup.selectedTarget
+                        color: Qt.tint(root.background, Qt.rgba(root.accent.r, root.accent.g, root.accent.b, .2))
+                        border.width: 2
+                        border.color: root.accent
+                        radius: root.dashboard.rounding || 0
+                    }
+                    Column {
+                        x: -parent.modelData.labelWidth / 2
+                        y: -height / 2
+                        width: parent.modelData.labelWidth
+                        spacing: 4 * monitorGroup.labelScale
                         Text {
                             textFormat: Text.PlainText
                             width: parent.width
                             text: "▣"
                             color: root.accent
                             horizontalAlignment: Text.AlignHCenter
-                            font.pixelSize: Math.min(32, parent.parent.modelData.labelHeight * .35)
+                            font.pixelSize: 24 * monitorGroup.labelScale
                         }
                         Text {
                             textFormat: Text.PlainText
-                            width: parent.width
-                            text: parent.parent.modelData.monitor
-                            color: root.foreground
+                            width: parent.width - 12 * monitorGroup.labelScale
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: monitorGroup.modelData.monitor
+                            color: monitorGroup.selectedTarget ? root.accent : root.foreground
                             horizontalAlignment: Text.AlignHCenter
-                            font.pixelSize: Math.min(17, Math.max(11, parent.width / 11))
+                            elide: Text.ElideRight
+                            font.pixelSize: 16 * monitorGroup.labelScale
                             font.bold: true
                         }
                         Text {
                             textFormat: Text.PlainText
-                            width: parent.width
-                            text: root.monitorData(parent.parent.modelData.monitor).model || "MONITOR"
+                            width: parent.width - 12 * monitorGroup.labelScale
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: root.monitorData(monitorGroup.modelData.monitor).model || "MONITOR"
                             color: root.foreground; opacity: .65
                             horizontalAlignment: Text.AlignHCenter
                             elide: Text.ElideRight
-                            font.pixelSize: 11
+                            font.pixelSize: 10 * monitorGroup.labelScale
+                        }
+                        Text {
+                            textFormat: Text.PlainText
+                            width: parent.width - 12 * monitorGroup.labelScale
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            visible: monitorGroup.selectedTarget
+                            text: root.polish ? "Wybrany monitor" : "Selected monitor"
+                            color: root.accent
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
+                            font.pixelSize: 10 * monitorGroup.labelScale
+                            font.bold: true
                         }
                     }
                 }
@@ -273,6 +303,8 @@ ShellRoot {
                     id: card
                     required property var modelData
                     readonly property bool selected: !modelData.disabled && root.hovered === modelData.name
+                    readonly property string shortcutDigit: root.keyboardOverview && !modelData.disabled && /^(?:[1-9]|10)$/.test(String(modelData.label || "")) ? (String(modelData.label) === "10" ? "0" : String(modelData.label)) : ""
+                    readonly property bool targetMonitor: root.keyboardOverview && root.dashboard.selectedMonitor === modelData.monitor
                     readonly property bool sourceWorkspace: !!root.dashboard.source && root.dashboard.sourceWorkspace === modelData.name
                     readonly property var workspaceMonitor: root.monitorData(modelData.monitor)
                     x: modelData.x; y: modelData.y
@@ -290,9 +322,28 @@ ShellRoot {
                     Text {
                         textFormat: Text.PlainText
                         x: 12; y: 9
-                        width: parent.width - 24; elide: Text.ElideRight
+                        width: parent.width - 24 - (shortcutCap.visible ? shortcutCap.width + 8 : 0); elide: Text.ElideRight
                         text: (root.polish ? "Pulpit " : "Workspace ") + (card.modelData.label || card.modelData.name)
                         color: root.foreground; font.pixelSize: 14; font.bold: true
+                    }
+                    Rectangle {
+                        id: shortcutCap
+                        x: parent.width - width - 9; y: 7
+                        width: 24; height: 22
+                        visible: card.shortcutDigit !== ""
+                        radius: Math.min(4, root.dashboard.rounding || 0)
+                        color: card.targetMonitor ? root.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, .1)
+                        border.width: 1
+                        border.color: card.targetMonitor ? root.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, .3)
+                        Text {
+                            anchors.centerIn: parent
+                            textFormat: Text.PlainText
+                            text: card.shortcutDigit
+                            color: card.targetMonitor ? root.background : root.foreground
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        Behavior on color { ColorAnimation { duration: root.hoverDuration; easing.type: Easing.OutCubic } }
                     }
                     Text {
                         textFormat: Text.PlainText

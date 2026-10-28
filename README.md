@@ -38,7 +38,12 @@ corresponding existing workspace is visible; **0** denotes local slot 10.
 commits the highlighted destination. Release the modifiers or press Escape to
 cancel. All modes show the same five base slots per mapped monitor plus existing
 workspaces. Extra empty slots are not synthesized for keyboard shortcuts. The source workspace has
-a persistent accent border and the label **Tu jest okno**.
+a persistent accent border and the label **Tu jest okno**. In keyboard mode,
+the target monitor has a bright ring and a **Wybrany monitor** label. Each
+actionable numbered card shows its digit in a keycap; keycaps on the selected
+monitor are highlighted, while other monitors keep subdued hints. Slot 10 shows
+**0**. Disabled cards and names without a direct numeric shortcut have no digit
+hint. These keyboard hints do not appear in mouse dragging or appearance preview.
 
 For a persistent chooser, press **Alt+Shift+Space**, then release the modifiers.
 Use **Tab/Shift+Tab** or Left/Right for monitors, Up/Down for workspaces, and
