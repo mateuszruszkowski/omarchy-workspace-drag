@@ -14,8 +14,8 @@ import tempfile
 ROOT = Path(__file__).parent
 MODIFIERS = {"SUPER": 64, "ALT": 8, "CTRL": 4, "SHIFT": 1}
 BUTTONS = {"left": 272, "right": 273, "middle": 274}
-DEFAULTS = {"modifiers": ["SUPER", "ALT"], "mouseButton": "left",
-            "backgroundOpacity": .72, "previewMode": "thumbnails", "cardScale": 1, "zoom": 1.15}
+DEFAULTS = {"modifiers": ["SUPER", "ALT"], "mouseButton": "left", "keyboardModifiers": ["ALT", "SHIFT"], "keyboardEnabled": True, "keyboardSource": "active",
+            "backgroundOpacity": .72, "previewMode": "thumbnails", "cardScale": 1, "zoom": 1.15, "animationPreset": "smooth"}
 OWN_DESCRIPTIONS = {"Workspace overview drag", "Drop window on workspace"}
 LEGACY_HASH = "eb2a136a2eb54d2a2b0696e38098beee54a05c50cf93a8cdd0a2acfb51f006d4"
 MANAGED_MARKER = "-- workspace-drag managed shortcut data v1"
@@ -41,7 +41,16 @@ def validate(draft):
             raise ValueError(message)
     if draft["previewMode"] not in ("thumbnails", "titles"):
         raise ValueError("Nieprawidłowy tryb podglądu.")
-    return {**draft, "modifiers": [m for m in MODIFIERS if m in mods]}
+    if draft["animationPreset"] not in ("none", "quick", "smooth"):
+        raise ValueError("Nieprawidłowy styl animacji.")
+    if draft["keyboardSource"] not in ("active", "pointer"):
+        raise ValueError("Nieprawidłowe źródło okna dla skrótu klawiatury.")
+    keyboard_mods = draft["keyboardModifiers"]
+    if (type(draft["keyboardEnabled"]) is not bool or not isinstance(keyboard_mods, list) or len(keyboard_mods) < 2
+            or any(not isinstance(m, str) or m not in MODIFIERS for m in keyboard_mods) or len(set(keyboard_mods)) != len(keyboard_mods)):
+        raise ValueError("Wybierz co najmniej dwa różne modyfikatory klawiatury.")
+    return {**draft, "modifiers": [m for m in MODIFIERS if m in mods],
+            "keyboardModifiers": [m for m in MODIFIERS if m in keyboard_mods]}
 
 
 def shortcut(draft):
@@ -57,6 +66,44 @@ def parse_shortcut(value, require_canonical=True):
     if require_canonical and value.strip() != shortcut(draft):
         raise ValueError("Nieprawidłowa kolejność modyfikatorów. Użyj kolejności SUPER, ALT, CTRL, SHIFT.")
     return draft
+
+
+KEYBOARD_MARKER = "-- workspace-drag keyboard overview v1"
+KEYBOARD_DESCRIPTION = "Workspace overview keyboard"
+KEYBOARD_KEYS = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "left", "right", "up", "down", "return", "space"}
+KEYBOARD_CODES = set(range(10, 20)) | {113, 114, 111, 116, 36, 65}
+
+
+def keyboard_shortcut(draft):
+    return " + ".join(draft["keyboardModifiers"]) if draft["keyboardEnabled"] else "disabled"
+
+
+def read_keyboard(root=ROOT):
+    file = root / "keyboard.conf"
+    if not file.exists():
+        return {k: DEFAULTS[k] for k in ("keyboardModifiers", "keyboardEnabled")}
+    value = file.read_text().strip()
+    if value == "disabled":
+        return {"keyboardModifiers": DEFAULTS["keyboardModifiers"], "keyboardEnabled": False}
+    draft = validate({**DEFAULTS, "keyboardModifiers": value.split(" + ")})
+    if keyboard_shortcut(draft) != value:
+        raise ValueError("Nieprawidłowy skrót klawiatury.")
+    return {k: draft[k] for k in ("keyboardModifiers", "keyboardEnabled")}
+
+
+def check_keyboard_conflicts(draft, bindings):
+    if not isinstance(bindings, list):
+        raise ValueError("Nieprawidłowa odpowiedź listy skrótów Hyprland.")
+    if not draft["keyboardEnabled"]:
+        return
+    mask = sum(MODIFIERS[m] for m in draft["keyboardModifiers"])
+    for binding in bindings:
+        if (binding.get("modmask") == mask and not binding.get("key") and binding.get("keycode", 0) == 0
+                and binding.get("description") != KEYBOARD_DESCRIPTION):
+            raise ValueError("Nie można sprawdzić fizycznego skrótu klawiatury: Hyprland nie ujawnia jego klawisza. Wybierz inny zestaw modyfikatorów.")
+        if (binding.get("modmask") == mask and (str(binding.get("key", "")).lower() in KEYBOARD_KEYS or binding.get("keycode") in KEYBOARD_CODES)
+                and binding.get("description") != KEYBOARD_DESCRIPTION):
+            raise ValueError("Skrót klawiatury jest zajęty: " + str(binding.get("description") or binding.get("dispatcher") or "istniejąca akcja")[:160])
 
 
 def legacy_shortcut(content):
@@ -80,7 +127,10 @@ def read_settings(root=ROOT):
         data.update(parse_shortcut(shortcut_path.read_text()))
     else:
         data.update(legacy_shortcut((root / "bindings.lua").read_text()))
-    data.update({k: config.get(k, DEFAULTS[k]) for k in ("backgroundOpacity", "previewMode", "cardScale", "zoom")})
+    data.update(read_keyboard(root))
+    source_file = root / "keyboard-source.conf"
+    data["keyboardSource"] = source_file.read_text().strip() if source_file.exists() else DEFAULTS["keyboardSource"]
+    data.update({k: config.get(k, DEFAULTS[k]) for k in ("backgroundOpacity", "previewMode", "cardScale", "zoom", "animationPreset")})
     return validate(data), config
 
 
@@ -134,14 +184,25 @@ def apply_settings(draft, root=ROOT, run=hyprctl):
     draft = validate(draft)
     before, config = read_settings(root)
     changing_shortcut = shortcut(before) != shortcut(draft)
-    if changing_shortcut:
+    changing_keyboard_prefix = keyboard_shortcut(before) != keyboard_shortcut(draft)
+    changing_source = before["keyboardSource"] != draft["keyboardSource"]
+    changing_keyboard = changing_keyboard_prefix or changing_source
+    if changing_shortcut or changing_keyboard:
         if MANAGED_MARKER not in (root / "bindings.lua").read_text():
             raise ValueError("Najpierw zaktualizuj dodatek instalatorem, aby włączyć graficzną zmianę skrótu.")
-        check_conflicts(draft, json.loads(run("-j", "binds")))
-    config.update({k: draft[k] for k in ("backgroundOpacity", "previewMode", "cardScale", "zoom")})
+        bindings = json.loads(run("-j", "binds"))
+        if changing_shortcut:
+            check_conflicts(draft, bindings)
+        if changing_keyboard_prefix:
+            check_keyboard_conflicts(draft, bindings)
+    config.update({k: draft[k] for k in ("backgroundOpacity", "previewMode", "cardScale", "zoom", "animationPreset")})
     updates = {root / "config.json": (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode()}
     if changing_shortcut:
         updates[root / "shortcut.conf"] = (shortcut(draft) + "\n").encode()
+    if changing_keyboard_prefix:
+        updates[root / "keyboard.conf"] = (keyboard_shortcut(draft) + "\n").encode()
+    if changing_source:
+        updates[root / "keyboard-source.conf"] = (draft["keyboardSource"] + "\n").encode()
     original = {p: p.read_bytes() if p.exists() else None for p in updates}
     backup = root / "settings-backups" / datetime.now().strftime("%Y%m%dT%H%M%S.%f")
     backup.mkdir(parents=True, mode=0o700)
@@ -151,7 +212,7 @@ def apply_settings(draft, root=ROOT, run=hyprctl):
     try:
         for destination, content in updates.items():
             atomic_write(destination, content)
-        if changing_shortcut:
+        if changing_shortcut or changing_keyboard:
             reload_checked(run)
     except Exception as error:
         rollback_errors = []
@@ -163,7 +224,7 @@ def apply_settings(draft, root=ROOT, run=hyprctl):
                     atomic_write(destination, content)
             except OSError as restore_error:
                 rollback_errors.append(str(restore_error))
-        if changing_shortcut:
+        if changing_shortcut or changing_keyboard:
             try:
                 reload_checked(run)
             except Exception as restore_error:

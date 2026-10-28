@@ -218,3 +218,45 @@ alone takes input until dismissed.
   Physical resolution, refresh, position, scale and transform matched the baseline
   exactly after profile application. User windows stayed on workspace 3 and 13.
 - Addon installation backup: `20261028T013357.122216`.
+
+## Source highlight, animations and keyboard chooser — 2026-10-28
+
+- 112 behavior tests pass. Native Lua tests execute modifier ordering, AltGr,
+  submap suppression, frozen source choice and binding callbacks; Python tests
+  cover early commit/cancel, reordered navigation, stable monitor topology,
+  five shared slots, settings validation, conflict rejection and rollback.
+- Independent Sol review approved the final pointer hit test, topology guards,
+  defaults contract and conservative native-bind conflict detection.
+- Native `code:N` bindings are valid despite empty legacy key/keycode fields in
+  `hyprctl -j binds`. Existing foreign physical binds with those ambiguous fields
+  cause a settings conflict refusal instead of an unchecked prefix assignment.
+- A live thumbnail changes monitor `directScanoutBlockedBy` telemetry. Comparing
+  whole monitor JSON cancelled the chooser; the corrected guard compares stable
+  identity, geometry, scale, transform and active workspace only.
+- Private uinput on the running compositor proved left Alt+Shift opens a passive
+  overview for the active disposable Foot window. Alt+Shift+4 moved it locally;
+  Alt+Shift+Right then 4 moved it to ID 14 (local 4 on DP-6). Both active views
+  remained 3 and 13, and ChatGPT/Parsec kept their original workspaces.
+- Alt+Shift+Space pinned the chooser; releasing modifiers, Tab then 4 moved Foot
+  to the second monitor. Escape cancelled a pinned session, and the next prefix
+  opened normally. Reverse Shift/Alt press order worked; releasing modifiers
+  cancelled. Right Alt+Shift did not open the chooser. Parsec submap suppressed it.
+- Pointer mode was saved through the production settings helper. With ChatGPT
+  active and the cursor above Foot, the native prefix captured Foot. Moving the
+  cursor away did not retarget; digit 4 moved Foot alone. A temporary no-warp
+  option enabled that differing-focus test and was restored immediately afterward.
+- Live settings showed the source selector, animation presets and fixed footer
+  Preview button. Defaults restored Active window without QML errors; Preview
+  opened and Escape closed it; Save persisted Active window and reported success.
+  Earlier GUI testing also previewed an unsaved disabled-animation choice.
+- Final keyboard screenshot shows exactly local 1–5 around both monitors, source
+  card border/tint and “Tu jest okno”. Source selection is active by default.
+- Installed code matches the source. Final feature installation backup is
+  `20261028T022338.227748`; settings saves have their own backups. Test windows,
+  temporary native probes and private input daemon were removed, and the initial
+  Parsec focus/submap restored. Desktop captures remain outside Git.
+
+Pointer mode deliberately declines overlapping eligible windows because this
+Hyprland API exposes no reliable stacking query. The panel states this limitation.
+This pass did not repeat physical mouse dragging, reboot or monitor unplug.
+Animation timing was not measured with frame instrumentation.

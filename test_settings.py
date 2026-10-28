@@ -15,7 +15,7 @@ SOURCE = Path(__file__).parent
 
 
 def legacy(chord="SUPER + ALT + mouse:272"):
-    content = (SOURCE / "bindings.lua").read_text()
+    content = (SOURCE / "bindings.lua").read_text().split("\n" + settings.KEYBOARD_MARKER)[0].rstrip() + "\n"
     start = content.index("local shortcut_file =")
     end = content.index("local command =")
     return (content[:start] + content[end:]).replace(settings.MANAGED_MARKER,
@@ -38,6 +38,28 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(draft["backgroundOpacity"], .45)
         self.assertEqual(draft["previewMode"], "titles")
         self.assertEqual(config["extension"], {"x": 7})
+
+    def test_animation_presets_persist_and_defaults_restore_smooth(self):
+        self.assertEqual(settings.read_settings(self.root)[0]["animationPreset"], "smooth")
+        for preset in ("none", "quick", "smooth"):
+            with self.subTest(preset=preset):
+                draft = {**settings.DEFAULTS, "animationPreset": preset}
+                calls = []
+                settings.apply_settings(draft, self.root, lambda *args: calls.append(args))
+                self.assertEqual(settings.read_settings(self.root)[0]["animationPreset"], preset)
+                self.assertEqual(json.loads((self.root / "config.json").read_text())["animationPreset"], preset)
+                self.assertEqual(calls, [])
+        settings.apply_settings({**settings.DEFAULTS, "animationPreset": "none"}, self.root)
+        settings.apply_settings(settings.DEFAULTS.copy(), self.root)
+        self.assertEqual(settings.read_settings(self.root)[0]["animationPreset"], "smooth")
+
+    def test_invalid_animation_presets_never_write_config(self):
+        original = (self.root / "config.json").read_bytes()
+        for preset in ("bounce", "", None, True, [], {}):
+            with self.subTest(preset=preset), self.assertRaises(ValueError):
+                settings.apply_settings({**settings.DEFAULTS, "animationPreset": preset}, self.root)
+            self.assertEqual((self.root / "config.json").read_bytes(), original)
+        self.assertFalse((self.root / "settings-backups").exists())
 
     def test_validation_rejects_injection_duplicates_unmodified_mouse_and_invalid_values(self):
         for key, value in [("modifiers", ["SUPER';os.execute('false')"]), ("modifiers", ["SUPER", "SUPER"]),
@@ -160,7 +182,7 @@ class SettingsTest(unittest.TestCase):
 local configured = ...
 local original_getenv = os.getenv
 os.getenv = function(name) if name == "HOME" then return "/test-home" else return original_getenv(name) end end
-io.open = function() return {read=function() return configured end, close=function() end} end
+io.open = function(file) if file:match("keyboard%-source.conf$") then return nil end; return {read=function() return configured end, close=function() end} end
 hl = {bind=function(chord) print(chord) end}
 dofile(arg[1])
 """
@@ -313,3 +335,142 @@ class OpenSettingsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class KeyboardSettingsTests(unittest.TestCase):
+    setUp = SettingsTest.setUp
+
+    def test_keyboard_default_missing_file_and_canonical_roundtrip(self):
+        self.assertEqual(settings.read_settings(self.root)[0]["keyboardModifiers"], ["ALT", "SHIFT"])
+        draft = {**settings.DEFAULTS, "keyboardModifiers": ["SHIFT", "CTRL"]}
+        calls = []
+        def run(*args):
+            calls.append(args)
+            return "[]" if args[0] == "-j" else "ok" if args[0] == "reload" else ""
+        settings.apply_settings(draft, self.root, run)
+        self.assertEqual((self.root / "keyboard.conf").read_text(), "CTRL + SHIFT\n")
+        self.assertEqual(settings.read_settings(self.root)[0]["keyboardModifiers"], ["CTRL", "SHIFT"])
+        self.assertEqual(calls, [("-j", "binds"), ("reload",), ("configerrors",)])
+
+    def test_keyboard_conflicts_check_owned_keys_but_preserve_tab_audio_and_ocr(self):
+        draft = settings.DEFAULTS.copy()
+        for binding in ({"modmask": 9, "key": "Tab"}, {"modmask": 9, "key": "XF86AudioPlay"},
+                        {"modmask": 65, "key": "1"}, {"modmask": 65, "key": "2"},
+                        {"modmask": 9, "key": "1", "description": settings.KEYBOARD_DESCRIPTION}):
+            settings.check_keyboard_conflicts(draft, [binding])
+        for binding in ({"modmask": 9, "key": "1"}, {"modmask": 9, "key": "Return"},
+                        {"modmask": 9, "keycode": 19}, {"modmask": 9, "key": "Left"}):
+            with self.subTest(binding=binding), self.assertRaises(ValueError):
+                settings.check_keyboard_conflicts(draft, [binding])
+
+    def test_keyboard_disable_reload_and_failure_roll_back_all_changed_files(self):
+        originals = {name: (self.root / name).read_bytes() for name in ("config.json", "shortcut.conf")}
+        calls = []
+        def run(*args):
+            calls.append(args)
+            if args[0] == "-j": return "[]"
+            if args[0] == "reload": return "ok"
+            return "bad config" if calls.count(("configerrors",)) == 1 else ""
+        with self.assertRaisesRegex(RuntimeError, "Przywrócono"):
+            settings.apply_settings({**settings.DEFAULTS, "keyboardEnabled": False, "mouseButton": "right"}, self.root, run)
+        for name, content in originals.items(): self.assertEqual((self.root / name).read_bytes(), content)
+        self.assertFalse((self.root / "keyboard.conf").exists())
+        self.assertEqual(calls.count(("reload",)), 2)
+
+    def test_keyboard_invalid_prefixes_never_write(self):
+        for value in (["ALT"], ["ALT", "ALT"], ["ALT", "EXEC"], [], "ALT + SHIFT"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                settings.apply_settings({**settings.DEFAULTS, "keyboardModifiers": value}, self.root)
+        self.assertFalse((self.root / "settings-backups").exists())
+
+
+class KeyboardInstallerTests(unittest.TestCase):
+    setUp = InstallerTest.setUp
+    install = InstallerTest.install
+
+    def test_managed_upgrade_and_operator_keyboard_prefix_preservation(self):
+        self.assertEqual(self.install().returncode, 0)
+        (self.app / "keyboard.conf").write_text("CTRL + SHIFT\n")
+        old = (SOURCE / "bindings.lua").read_text().split("\n" + settings.KEYBOARD_MARKER)[0].rstrip() + "\n"
+        (self.app / "bindings.lua").write_text(old)
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.app / "keyboard.conf").read_text(), "CTRL + SHIFT\n")
+
+
+class SettingsDefaultsContractTests(unittest.TestCase):
+    def test_qml_defaults_button_provides_complete_valid_settings(self):
+        import re
+        source = (SOURCE / "settings.qml").read_text()
+        literal = re.search(r"root\.populate\((\{[^}]+\})\)", source).group(1)
+        literal = re.sub(r"([,{]\s*)([A-Za-z]+):", r'\1"\2":', literal)
+        self.assertEqual(settings.validate(json.loads(literal)), settings.DEFAULTS)
+
+
+class KeyboardPhysicalConflictTests(unittest.TestCase):
+    def test_native_lua_physical_bind_with_legacy_empty_key_is_unverifiable(self):
+        exported = {"modmask": 9, "key": "", "keycode": 0, "description": "Foreign physical binding", "dispatcher": "lua"}
+        with self.assertRaisesRegex(ValueError, "Nie można sprawdzić"):
+            settings.check_keyboard_conflicts(settings.DEFAULTS, [exported])
+        settings.check_keyboard_conflicts(settings.DEFAULTS, [{**exported, "description": settings.KEYBOARD_DESCRIPTION}])
+        settings.check_keyboard_conflicts(settings.DEFAULTS, [{**exported, "modmask": 65}])
+
+
+class KeyboardSourceSettingsTests(unittest.TestCase):
+    setUp = SettingsTest.setUp
+
+    def test_source_defaults_and_pointer_roundtrip_reload_without_conflict_claim(self):
+        self.assertEqual(settings.read_settings(self.root)[0]["keyboardSource"], "active")
+        calls = []
+        def run(*args):
+            calls.append(args)
+            return "[]" if args[0] == "-j" else "ok" if args[0] == "reload" else ""
+        settings.apply_settings({**settings.DEFAULTS, "keyboardSource": "pointer"}, self.root, run)
+        self.assertEqual((self.root / "keyboard-source.conf").read_text(), "pointer\n")
+        self.assertEqual(settings.read_settings(self.root)[0]["keyboardSource"], "pointer")
+        self.assertIn(("reload",), calls)
+
+    def test_source_validation_and_reload_rollback(self):
+        with self.assertRaises(ValueError):
+            settings.apply_settings({**settings.DEFAULTS, "keyboardSource": "shell"}, self.root)
+        calls = []
+        def run(*args):
+            calls.append(args)
+            if args[0] == "-j": return "[]"
+            if args[0] == "reload": return "ok"
+            return "bad" if calls.count(("configerrors",)) == 1 else ""
+        with self.assertRaisesRegex(RuntimeError, "Przywrócono"):
+            settings.apply_settings({**settings.DEFAULTS, "keyboardSource": "pointer"}, self.root, run)
+        self.assertFalse((self.root / "keyboard-source.conf").exists())
+        self.assertEqual(settings.read_settings(self.root)[0]["keyboardSource"], "active")
+
+class KeyboardSourceInstallerTests(unittest.TestCase):
+    setUp = InstallerTest.setUp
+    install = InstallerTest.install
+
+    def test_source_install_default_and_operator_pointer_preservation(self):
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual((self.app / "keyboard-source.conf").read_text(), "active\n")
+        (self.app / "keyboard-source.conf").write_text("pointer\n")
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual((self.app / "keyboard-source.conf").read_text(), "pointer\n")
+
+    def test_previous_keyboard_version_exact_hash_upgrades_but_modified_code_is_refused(self):
+        content = (SOURCE / "bindings.lua").read_text()
+        start = content.index('local keyboard_source =')
+        end = content.index('if hl.on and', start)
+        previous = (content[:start] + content[end:]).replace('%d %s %d %d %d %d %s", command,', '%d %s %d %d %d %d", command,').replace('digit or 0, keyboard_source))', 'digit or 0))').replace('    local window = keyboard_source == "pointer" and window_at_pointer() or nil\n    if keyboard_source == "active" then window = hl.get_active_window() end', '    local window = hl.get_active_window()')
+        previous = previous.replace('    if modifiers[code] then down[code] = state == 1 end\n    if hl.get_current_submap() ~= "" then\n      if session then cancel() end\n      blocked = not released()\n      return\n    end\n    if modifiers[code] then', '    if modifiers[code] then\n      down[code] = state == 1').replace(' or hl.get_current_submap() ~= "" then return end', ' then return end')
+        self.app.mkdir(parents=True)
+        (self.app / "shortcut.conf").write_text("SUPER + ALT + mouse:272\n")
+        (self.app / "bindings.lua").write_text(previous + "\nprint('operator')\n")
+        self.assertNotEqual(self.install().returncode, 0)
+        (self.app / "bindings.lua").write_text(previous)
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.app / "bindings.lua").read_text(), content)
+
+    def test_invalid_source_file_is_preserved_and_install_refused(self):
+        self.app.mkdir(parents=True)
+        (self.app / "keyboard-source.conf").write_text("pointer; execute\n")
+        self.assertNotEqual(self.install().returncode, 0)
+        self.assertEqual((self.app / "keyboard-source.conf").read_text(), "pointer; execute\n")

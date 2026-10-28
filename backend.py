@@ -14,7 +14,7 @@ import time
 
 ROOT = Path(__file__).parent
 DEFAULTS = {"groupColumns": 0, "cardWidth": 230, "cardHeight": 150, "gap": 24,
-            "cardScale": 1, "zoom": 1.15, "backgroundOpacity": .72, "previewMode": "thumbnails",
+            "cardScale": 1, "zoom": 1.15, "backgroundOpacity": .72, "previewMode": "thumbnails", "animationPreset": "smooth",
             "hiddenMonitors": ["STUDIO-VIRTUAL"], "timeoutSeconds": 25, "pollMilliseconds": 35,
             "restoreCursor": True, "defaultWorkspaces": list(range(1, 11))}
 
@@ -34,6 +34,8 @@ def load_config():
     config["groupColumns"] = int(config["groupColumns"])
     if config.get("previewMode") not in ("thumbnails", "titles"):
         config["previewMode"] = "thumbnails"
+    if config.get("animationPreset") not in ("none", "quick", "smooth"):
+        config["animationPreset"] = DEFAULTS["animationPreset"]
     if not isinstance(config.get("hiddenMonitors"), list):
         config["hiddenMonitors"] = DEFAULTS["hiddenMonitors"]
     config["hiddenMonitors"] = [name for name in config["hiddenMonitors"] if isinstance(name, str)]
@@ -251,6 +253,10 @@ class Dragging:
     clients: list
     started: float
     mode: str = "drag"
+    selected_monitor: str = ""
+    selected_name: str = ""
+    keyboard_sequence: int = -1
+    keyboard_source: str = "active"
 
 
 class Controller:
@@ -267,7 +273,8 @@ class Controller:
         if not drag:
             self.emit({"state": "idle"})
             return
-        hovered = target_at(drag.cards, drag.monitor, pointer or drag.origin)
+        hovered = (next((card for card in drag.cards if card["name"] == drag.selected_name and card["monitor"] == drag.selected_monitor), None)
+                   if drag.mode.startswith("keyboard") else target_at(drag.cards, drag.monitor, pointer or drag.origin))
         source_workspace = drag.source.get("workspace", {}).get("name", "")
         source_label = next((card.get("label", source_workspace) for card in drag.cards
                              if card["name"] == source_workspace),
@@ -281,17 +288,115 @@ class Controller:
                    "sourceWorkspace": source_workspace, "sourceWorkspaceLabel": source_label,
                    "clients": drag.clients, "hovered": hovered["name"] if hovered else "",
                    "zoom": self.config["zoom"], "rounding": self.config.get("rounding", 0),
-                   "mode": drag.mode, "demo": drag.mode == "demo"})
+                   "animationPreset": self.config["animationPreset"],
+                   "animationsEnabled": self.config.get("animationsEnabled", True),
+                   "mode": drag.mode, "keyboardPrefix": self.keyboard_prefix(),
+                   "selectedMonitor": drag.selected_monitor, "demo": drag.mode == "demo"})
+
+    def keyboard_prefix(self):
+        from settings import read_keyboard, keyboard_shortcut
+        try:
+            return keyboard_shortcut(read_keyboard(ROOT))
+        except (OSError, ValueError):
+            return ""
+
+    def keyboard(self, action):
+        token = action.get("token")
+        operation = action.get("action")
+        if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,100}", token):
+            raise ValueError("invalid keyboard token")
+        if operation not in ("begin", "pin", "navigate", "commit", "cancel"):
+            raise ValueError("invalid keyboard action")
+        if operation == "cancel":
+            self.finish(token, cancel=True)
+            return
+        if token in self.ended:
+            return
+        drag = self.drag
+        if drag and (drag.token != token or not drag.mode.startswith("keyboard")):
+            return
+        if not drag:
+            snapshot = action.get("source", {})
+            source_mode = snapshot.get("mode", "active") if isinstance(snapshot, dict) else None
+            if (not isinstance(snapshot, dict) or not re.fullmatch(r"0x[0-9a-fA-F]+", str(snapshot.get("address", "")))
+                    or source_mode not in ("active", "pointer") or type(snapshot.get("workspace")) is not int or not isinstance(snapshot.get("monitor"), str)):
+                raise ValueError("invalid keyboard source")
+            self.config = load_config()
+            self.read_native_appearance(self.config)
+            monitors = [logical_monitor(m) for m in self.ipc.get("monitors") if not m.get("disabled")]
+            clients = self.ipc.get("clients")
+            source = next((c for c in clients if c.get("address") == snapshot["address"] and c.get("mapped")
+                           and not c.get("hidden") and c.get("workspace", {}).get("id") == snapshot["workspace"]), None)
+            monitor = next((m for m in monitors if m["name"] == snapshot["monitor"] and source
+                            and m["id"] == source.get("monitor") and m["activeWorkspace"]["id"] == snapshot["workspace"]), None)
+            if not monitor or (source_mode == "active" and self.ipc.get("activewindow").get("address") != snapshot["address"]):
+                self.finish(token, cancel=True)
+                return
+            cards, groups, previews = self.dashboard_data(monitors, monitor, clients, self.config)
+            origin = {"x": monitor["x"], "y": monitor["y"]}
+            drag = Dragging(token, source, monitor, origin, monitors, cards, groups, previews, self.clock(), "keyboard-prefix")
+            drag.keyboard_source = source_mode
+            drag.selected_monitor, drag.selected_name = monitor["name"], source["workspace"]["name"]
+            self.drag = drag
+            self.restore = None
+        sequence = action.get("sequence", drag.keyboard_sequence + 1)
+        if type(sequence) is not int or sequence <= drag.keyboard_sequence:
+            return
+        drag.keyboard_sequence = sequence
+        if operation == "pin":
+            drag.mode = "keyboard"
+        if "monitorStep" in action or "workspaceStep" in action:
+            # Native messages contain absolute navigation offsets, so launch order is irrelevant.
+            monitors = [g["monitor"] for g in drag.groups]
+            ms, ws = action.get("monitorStep", 0), action.get("workspaceStep", 0)
+            if type(ms) is not int or type(ws) is not int or abs(ms) > 100000 or abs(ws) > 100000:
+                raise ValueError("invalid keyboard navigation")
+            drag.selected_monitor = monitors[(monitors.index(drag.monitor["name"]) + ms) % len(monitors)]
+            cards = [c for c in drag.cards if c["monitor"] == drag.selected_monitor and not c.get("disabled")]
+            if cards:
+                base = next((i for i, c in enumerate(cards) if c["name"] == drag.source["workspace"]["name"]), 0)
+                drag.selected_name = cards[(base + ws) % len(cards)]["name"]
+        elif operation == "navigate":
+            direction = action.get("direction")
+            monitors = [g["monitor"] for g in drag.groups]
+            if direction in ("left", "right"):
+                drag.selected_monitor = monitors[(monitors.index(drag.selected_monitor) + (-1 if direction == "left" else 1)) % len(monitors)]
+                cards = [c for c in drag.cards if c["monitor"] == drag.selected_monitor and not c.get("disabled")]
+                drag.selected_name = cards[0]["name"] if cards else ""
+            elif direction in ("up", "down"):
+                cards = [c for c in drag.cards if c["monitor"] == drag.selected_monitor and not c.get("disabled")]
+                if cards:
+                    index = next((i for i, c in enumerate(cards) if c["name"] == drag.selected_name), 0)
+                    drag.selected_name = cards[(index + (-1 if direction == "up" else 1)) % len(cards)]["name"]
+            else:
+                raise ValueError("invalid keyboard direction")
+        if operation == "commit":
+            digit = action.get("digit")
+            if digit is not None:
+                if type(digit) is not int or not 1 <= digit <= 10:
+                    raise ValueError("invalid keyboard digit")
+                target = next((c for c in drag.cards if c["monitor"] == drag.selected_monitor and c.get("label") == str(digit)), None)
+                drag.selected_name = target["name"] if target else ""
+            self.finish(token)
+        else:
+            self.publish()
+
+    def read_native_appearance(self, config):
+        try:
+            config["rounding"] = max(0, min(40, self.ipc.get("getoption decoration:rounding")["int"]))
+        except (KeyError, ValueError, TypeError):
+            config["rounding"] = 0
+        try:
+            config["animationsEnabled"] = self.ipc.get("getoption animations:enabled")["bool"] is not False
+        except (KeyError, ValueError, TypeError):
+            config["animationsEnabled"] = True
 
     def begin(self, token, pointer=None):
         if token in self.ended or self.drag:
             return
         self.restore = None
         self.config = load_config()
-        try:
-            self.config["rounding"] = max(0, min(40, self.ipc.get("getoption decoration:rounding")["int"]))
-        except (KeyError, ValueError, TypeError):
-            self.config["rounding"] = 0
+        self.read_native_appearance(self.config)
         monitors = [logical_monitor(m) for m in self.ipc.get("monitors") if not m.get("disabled")]
         pointer = pointer or self.ipc.get("cursorpos")
         monitor = next((m for m in monitors if m["x"] <= pointer["x"] < m["x"] + m["logicalWidth"]
@@ -339,23 +444,22 @@ class Controller:
         return cards, groups, previews
 
     def preview(self, token, appearance):
-        valid = isinstance(appearance, dict) and not (appearance.keys() - {"backgroundOpacity", "previewMode", "cardScale", "zoom"})
+        valid = isinstance(appearance, dict) and not (appearance.keys() - {"backgroundOpacity", "previewMode", "cardScale", "zoom", "animationPreset"})
         for key, low, high in (("backgroundOpacity", .1, 1), ("cardScale", .5, 2), ("zoom", 1, 1.35)):
             if valid and key in appearance:
                 value = appearance[key]
                 valid = type(value) in (int, float) and math.isfinite(value) and low <= value <= high
         if valid and "previewMode" in appearance:
             valid = appearance["previewMode"] in ("thumbnails", "titles")
+        if valid and "animationPreset" in appearance:
+            valid = appearance["animationPreset"] in ("none", "quick", "smooth")
         if not valid or self.drag:
             self.emit({"state": "preview-result", "token": token, "ok": False,
                        "error": "Trwa przeciąganie lub podgląd." if self.drag else "Nieprawidłowe ustawienia podglądu."})
             return False
         config = load_config()
         config.update(appearance)
-        try:
-            config["rounding"] = max(0, min(40, self.ipc.get("getoption decoration:rounding")["int"]))
-        except (KeyError, ValueError, TypeError):
-            config["rounding"] = 0
+        self.read_native_appearance(config)
         monitors = [logical_monitor(m) for m in self.ipc.get("monitors") if not m.get("disabled")]
         if not monitors:
             self.emit({"state": "preview-result", "token": token, "ok": False, "error": "Brak dostępnego monitora."})
@@ -379,13 +483,17 @@ class Controller:
             return
         self.drag = None
         self.emit({"state": "idle"})
-        if drag.mode != "drag":
+        keyboard = drag.mode.startswith("keyboard")
+        if drag.mode != "drag" and not keyboard:
             return
-        self.restore = (self.clock() + .12, drag)
-        if cancel or self.clock() - drag.started < .12:
+        if not keyboard:
+            self.restore = (self.clock() + .12, drag)
+        if cancel or (not keyboard and self.clock() - drag.started < .12):
             return
-        pointer = pointer or self.ipc.get("cursorpos")
-        target = target_at(drag.cards, drag.monitor, pointer)
+        if not keyboard:
+            pointer = pointer or self.ipc.get("cursorpos")
+        target = (next((c for c in drag.cards if c["name"] == drag.selected_name and c["monitor"] == drag.selected_monitor and not c.get("disabled")), None)
+                  if keyboard else target_at(drag.cards, drag.monitor, pointer))
         if not target or target["name"] == drag.source["workspace"]["name"]:
             return
         monitors = [logical_monitor(m) for m in self.ipc.get("monitors") if not m.get("disabled")]
@@ -395,7 +503,9 @@ class Controller:
             return
         clients = self.ipc.get("clients")
         source = next((c for c in clients if c["address"] == drag.source["address"]), None)
-        if not source or source["workspace"]["id"] != drag.source["workspace"]["id"]:
+        if not source or source["workspace"]["id"] != drag.source["workspace"]["id"] or source.get("monitor") != drag.source.get("monitor"):
+            return
+        if keyboard and drag.keyboard_source == "active" and self.ipc.get("activewindow").get("address") != drag.source["address"]:
             return
         blocks = load_workspace_blocks()
         available = workspace_targets(monitors, self.ipc.get("workspaces"), self.ipc.get("workspacerules"), self.config, current_source_monitor, blocks)
@@ -415,6 +525,8 @@ class Controller:
                   f"assert(w and w.address=={expected} and w.workspace and w.workspace.id=={source['workspace']['id']},'Workspace drag source changed')",
                   lookup,
                   f"assert(not target_ws or (target_ws.monitor and target_ws.monitor.name=={target_monitor}),'Workspace drag target changed monitor')"]
+        if keyboard and drag.keyboard_source == "active":
+            guards.append(f"assert(hl.get_active_window() and hl.get_active_window().address=={expected},'Workspace overview focus changed')")
         if fresh_target.get("slot"):
             guards.append(f"if not target_ws then hl.workspace_rule({{workspace={lua_string(target['name'])},monitor={target_monitor}}}) end")
         elif fresh_target["existing"]:
@@ -435,6 +547,18 @@ class Controller:
         if self.drag:
             if self.clock() - self.drag.started >= self.config["timeoutSeconds"]:
                 self.finish(self.drag.token, cancel=True)
+            elif self.drag.mode.startswith("keyboard"):
+                drag = self.drag
+                clients, monitors = self.ipc.get("clients"), self.ipc.get("monitors")
+                source = next((c for c in clients if c.get("address") == drag.source["address"]), None)
+                def stable_monitor(monitor):
+                    logical = logical_monitor(monitor)
+                    return tuple(logical.get(key) for key in ("id", "name", "x", "y", "logicalWidth", "logicalHeight", "scale", "transform")) + (logical.get("activeWorkspace", {}).get("id"),)
+                # Opening screencopy changes directScanoutBlockedBy and other telemetry.
+                # Only display identity, geometry and active workspace invalidate this snapshot.
+                valid_monitors = sorted(stable_monitor(m) for m in monitors if not m.get("disabled")) == sorted(stable_monitor(m) for m in drag.monitors)
+                if not source or source.get("workspace") != drag.source.get("workspace") or source.get("monitor") != drag.source.get("monitor") or not valid_monitors or (drag.keyboard_source == "active" and self.ipc.get("activewindow").get("address") != drag.source["address"]):
+                    self.finish(drag.token, cancel=True)
             else:
                 pointer = self.ipc.get("cursorpos")
                 hovered = target_at(self.drag.cards, self.drag.monitor, pointer)
@@ -482,7 +606,9 @@ def main():
                     pointer = action.get("pointer")
                     if pointer is not None and not (isinstance(pointer, dict) and all(isinstance(pointer.get(k), (int, float)) and math.isfinite(pointer[k]) for k in ("x", "y"))):
                         raise ValueError("invalid pointer")
-                    if command == "begin":
+                    if command == "keyboard":
+                        controller.keyboard(action)
+                    elif command == "begin":
                         controller.begin(token, pointer)
                     elif command == "end":
                         controller.finish(token, pointer=pointer)

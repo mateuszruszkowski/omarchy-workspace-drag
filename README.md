@@ -28,6 +28,42 @@ workspace, press Escape, or hold longer than 25 seconds to cancel. Very short ho
 under 120 ms cancel. Press and release carry a sequence token so an early release
 cannot accidentally start a stuck drag.
 
+## Keyboard movement
+
+Hold **left Alt+Shift** to see available destinations before pressing a digit.
+The passive overview leaves application keyboard focus unchanged. **1–5** moves
+the captured window to that local slot. Extra digits work only when the
+corresponding existing workspace is visible; **0** denotes local slot 10.
+**Left/Right** selects a monitor, **Up/Down** selects a workspace, and **Enter**
+commits the highlighted destination. Release the modifiers or press Escape to
+cancel. All modes show the same five base slots per mapped monitor plus existing
+workspaces. Extra empty slots are not synthesized for keyboard shortcuts. The source workspace has
+a persistent accent border and the label **Tu jest okno**.
+
+For a persistent chooser, press **Alt+Shift+Space**, then release the modifiers.
+Use **Tab/Shift+Tab** or Left/Right for monitors, Up/Down for workspaces, and
+Enter or a digit to move. Escape closes it. This pinned chooser takes keyboard
+focus. Moving is silent: each monitor keeps its active workspace, and the chosen
+window becomes tiled at the destination. Changed source identity, monitor geometry or workspace ownership cancels the
+operation. Active-window mode also cancels if another window receives focus.
+
+The settings panel chooses **Aktywne okno** (default) or **Okno pod kursorem**
+for the keyboard source. The exact source is captured at prefix press; subsequent
+pointer motion cannot change it. An empty point or overlapping eligible windows in pointer mode does nothing;
+the native API cannot reliably identify stacking order.
+This choice does not change mouse dragging. Source selection is allowlisted plain
+data in `keyboard-source.conf`, and changing it reloads the native hook.
+
+Right Alt is excluded because it is AltGr in the Polish layout. The prefix is
+inactive in a non-default submap, including Parsec keyboard forwarding. Existing
+**Alt+Shift+Tab** and OCR/screenshot shortcuts retain their actions. Other keys
+cancel the passive chooser and continue to their normal handler. Prefix bindings
+are data in `keyboard.conf`; the settings panel can disable them or choose at
+least two modifiers. It checks occupied destination/navigation shortcuts before
+saving. The modifier hook stores only modifier state, not typed text. Simultaneous
+holds of the same modifier on multiple keyboards cannot be distinguished by the
+Hyprland event API.
+
 ## Install and remove
 
 Requires Hyprland with Lua dispatchers, Quickshell 0.3.2,
@@ -84,13 +120,17 @@ window thumbnails and window titles. Two additional sliders control workspace
 preview size (50–200%) and hover enlargement (100–135%). Size scales both
 dimensions together, preserving custom card proportions. The overview still fits
 the available display, so large settings may be constrained by screen space.
-The shortcut summary updates while editing.
+The shortcut summary updates while editing. Keyboard movement has separate modifier
+controls and an enable switch. Animation choices are **Wyłączone**, **Szybkie**
+and **Płynne**; source highlighting stays visible in every preset. Opening fade
+and hover transitions use the current Omarchy colors and rounding. System-wide
+`animations:enabled = false` takes precedence over the selected preset.
 At least one modifier is required. **Domyślne** resets only the displayed draft.
 **Zapisz i zastosuj** writes it; **Wczytaj ponownie** discards the draft and reads
 the current saved settings. Closing the window discards unsaved edits.
 
 **Podgląd** opens the actual workspace overview using the current dimming and
-preview-mode, preview-size and hover-enlargement controls, including unsaved edits. It displays real windows without
+preview-mode, preview-size, hover-enlargement and animation controls, including unsaved edits. It displays real windows without
 grabbing one. **Zamknij podgląd** or Escape returns to the unchanged settings
 draft. The configured timeout also closes it. Preview neither saves settings nor
 moves windows, switches workspaces or restores the pointer. A running drag must
@@ -124,6 +164,7 @@ preserves fields it does not edit. They load at the next drag without restart.
 | `gap` | 24 | Space between slots. |
 | `zoom` | 1.15 | Hover scale from 1.0 to 1.35. |
 | `backgroundOpacity` | 0.72 | Dimmed theme backdrop opacity. The desktop remains visible underneath. |
+| `animationPreset` | `smooth` | Opening/hover animation preset: `none`, `quick`, or `smooth`; native disabled animations take precedence. |
 | `previewMode` | `thumbnails` | Set to `titles` to show application window titles instead of captures. |
 | `hiddenMonitors` | `["STUDIO-VIRTUAL"]` | Hide these monitor groups, except when one is the source. Set `[]` to show every output. |
 | `timeoutSeconds` | 25 | Cancel a stuck hold. |
@@ -154,8 +195,9 @@ capture and risks recursive monitor thumbnails. This standalone process uses nat
 capture, network access, or screenshot cache is used. Window titles stay in the
 local UI pipe, are rendered as plain text in titles mode, and are never logged.
 Only pointer deltas are sent each frame; static models are published once per drag.
-The click-through overlay does not depend on receiving a mouse release and never
-takes keyboard focus. Native Lua bindings supply release and guarded Escape.
+The mouse and passive keyboard overlays do not take keyboard focus. Mouse release
+is supplied by the native binding; pinned keyboard mode and settings preview take
+exclusive focus until dismissed. Native Lua bindings supply release and guarded Escape.
 Taking exclusive or on-demand layer keyboard focus would clear Hyprland
 mouse-button state and lose the release event. Slots remain fixed while hovered
 cards enlarge. Circle placement reserves room for enlarged cards and center labels

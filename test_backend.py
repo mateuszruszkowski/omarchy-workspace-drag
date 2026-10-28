@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -7,7 +8,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from backend import Controller, DEFAULTS, layout_dashboard, logical_monitor, target_at, workspace_targets
+from backend import Controller, DEFAULTS, load_config, layout_dashboard, logical_monitor, target_at, workspace_targets
 
 
 class FakeIPC:
@@ -433,6 +434,62 @@ else assert(not ok and #calls==0) end
         self.assertFalse(self.ipc.dispatches)
         self.assertFalse(self.controller.drag)
 
+    def test_animation_config_defaults_and_invalid_values(self):
+        for preset in ("none", "quick", "smooth", "bounce", None, True, [], {}):
+            with self.subTest(preset=preset), patch("pathlib.Path.read_text", return_value=json.dumps({"animationPreset": preset})):
+                self.assertEqual(load_config()["animationPreset"], preset if preset in ("none", "quick", "smooth") else "smooth")
+        with patch("pathlib.Path.read_text", return_value="{}"):
+            self.assertEqual(load_config()["animationPreset"], "smooth")
+
+    def test_partial_animation_preview_is_published_without_changing_geometry(self):
+        for preset in ("none", "quick", "smooth"):
+            with self.subTest(preset=preset), patch("backend.load_config", return_value=DEFAULTS.copy()):
+                self.controller.preview("baseline", {})
+                baseline = self.output[-1]
+                self.controller.finish("baseline", cancel=True)
+                with patch("pathlib.Path.write_text", side_effect=AssertionError("preview wrote a file")):
+                    self.assertTrue(self.controller.preview("animation", {"animationPreset": preset}))
+                result = self.output[-1]
+                self.assertEqual(result["animationPreset"], preset)
+                self.assertEqual(result["cards"], baseline["cards"])
+                self.assertEqual(result["source"], "")
+                self.assertEqual(result["sourceWorkspace"], "")
+                self.assertEqual(result["clients"], baseline["clients"])
+                self.controller.finish("animation", cancel=True)
+
+    def test_native_motion_disabled_is_snapshotted_for_drag_and_preview(self):
+        self.ipc.data["getoption animations:enabled"] = {"option": "animations:enabled", "bool": False, "set": True}
+        self.begin()
+        self.assertFalse(self.output[-1]["animationsEnabled"])
+        self.ipc.data["getoption animations:enabled"] = {"option": "animations:enabled", "bool": True, "set": True}
+        self.controller.publish()
+        self.assertFalse(self.output[-1]["animationsEnabled"])
+        self.controller.finish("a", cancel=True)
+        self.assertTrue(self.controller.preview("enabled", {"animationPreset": "quick"}))
+        self.assertTrue(self.output[-1]["animationsEnabled"])
+        self.assertEqual(self.output[-1]["animationPreset"], "quick")
+        self.controller.finish("enabled", cancel=True)
+        self.ipc.data["getoption animations:enabled"] = {"option": "animations:enabled", "bool": False, "set": True}
+        self.assertTrue(self.controller.preview("disabled", {"animationPreset": "smooth"}))
+        self.assertFalse(self.output[-1]["animationsEnabled"])
+
+    def test_missing_native_motion_option_preserves_preset_behavior(self):
+        for response in ({}, None, {"option": "animations:enabled", "set": False}):
+            with self.subTest(response=response):
+                self.ipc.data["getoption animations:enabled"] = response
+                self.assertTrue(self.controller.preview("fallback", {"animationPreset": "none"}))
+                self.assertTrue(self.output[-1]["animationsEnabled"])
+                self.assertEqual(self.output[-1]["animationPreset"], "none")
+                self.controller.finish("fallback", cancel=True)
+
+    def test_invalid_animation_preview_is_rejected_without_starting(self):
+        for preset in ("bounce", "", None, True, [], {}):
+            with self.subTest(preset=preset):
+                self.assertFalse(self.controller.preview("invalid", {"animationPreset": preset}))
+                self.assertIsNone(self.controller.drag)
+                self.assertEqual(self.output[-1]["state"], "preview-result")
+                self.assertFalse(self.output[-1]["ok"])
+
     def test_preview_uses_real_workspaces_clients_and_draft_appearance(self):
         appearance = {"backgroundOpacity": .34, "previewMode": "titles", "cardScale": 1.7, "zoom": 1.3}
         with patch("pathlib.Path.write_text", side_effect=AssertionError("preview wrote a file")):
@@ -477,18 +534,21 @@ else assert(not ok and #calls==0) end
                 self.assertFalse(self.ipc.requests)
 
     def test_preview_reloads_saved_config_and_next_drag_discards_draft(self):
-        saved = DEFAULTS | {"backgroundOpacity": .8, "previewMode": "thumbnails", "cardWidth": 345, "cardScale": .8, "zoom": 1.1}
+        saved = DEFAULTS | {"backgroundOpacity": .8, "previewMode": "thumbnails", "cardWidth": 345, "cardScale": .8, "zoom": 1.1, "animationPreset": "quick"}
         self.controller.config = DEFAULTS | {"cardWidth": 123}
         with patch("backend.load_config", side_effect=lambda: saved.copy()):
-            self.controller.preview("preview-a", {"backgroundOpacity": .22, "previewMode": "titles", "cardScale": 2, "zoom": 1.35})
+            self.controller.preview("preview-a", {"backgroundOpacity": .22, "previewMode": "titles", "cardScale": 2, "zoom": 1.35, "animationPreset": "none"})
             self.assertEqual(self.controller.config["cardWidth"], 345)
             self.assertEqual(self.controller.config["backgroundOpacity"], .22)
+            self.assertEqual(self.controller.config["animationPreset"], "none")
             self.controller.finish("preview-a", cancel=True)
             self.begin()
         self.assertEqual(self.controller.config["backgroundOpacity"], .8)
         self.assertEqual(self.controller.config["previewMode"], "thumbnails")
         self.assertEqual(self.controller.config["cardScale"], .8)
         self.assertEqual(self.controller.config["zoom"], 1.1)
+        self.assertEqual(self.controller.config["animationPreset"], "quick")
+        self.assertEqual(self.output[-1]["animationPreset"], "quick")
         self.assertEqual(saved["cardScale"], .8)
         self.assertEqual(saved["zoom"], 1.1)
         self.assertEqual(saved["backgroundOpacity"], .8)
@@ -632,3 +692,146 @@ class WorkspaceBlockTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class KeyboardTests(unittest.TestCase):
+    def setUp(self):
+        WorkspaceDragTests.setUp(self)
+        self.ipc.data["activewindow"] = {"address": "0xabc"}
+        self.source = {"address": "0xabc", "workspace": 1, "monitor": "eDP-1"}
+
+    def keyboard(self, action="begin", token="keys", **extra):
+        self.controller.keyboard(dict(token=token, action=action, source=self.source, **extra))
+
+    def test_keyboard_uses_focused_source_with_pointer_on_another_monitor(self):
+        self.ipc.data["cursorpos"] = {"x": 2000, "y": 400}
+        self.keyboard()
+        self.assertEqual(self.controller.drag.source["address"], "0xabc")
+        self.assertEqual(self.controller.drag.monitor["name"], "eDP-1")
+        self.assertEqual(self.controller.drag.mode, "keyboard-prefix")
+        self.assertEqual(len([c for c in self.controller.drag.cards if c["monitor"] == "DP-6"]), 5)
+        self.keyboard("commit", digit=5, monitorStep=1)
+        self.assertIn('workspace="15",follow=false', self.ipc.dispatches[0])
+        self.assertIsNone(self.controller.restore)
+
+    def test_keyboard_early_commit_tombstones_late_begin(self):
+        self.keyboard("commit", digit=2, sequence=2)
+        self.keyboard(sequence=1)
+        self.assertIsNone(self.controller.drag)
+        self.assertEqual(len(self.ipc.dispatches), 1)
+        self.assertIn('workspace="2",follow=false', self.ipc.dispatches[0])
+
+    def test_keyboard_cancel_before_begin_never_moves(self):
+        self.keyboard("cancel", sequence=2)
+        self.keyboard(sequence=1)
+        self.assertIsNone(self.controller.drag)
+        self.assertEqual(self.ipc.dispatches, [])
+
+    def test_navigation_absolute_offsets_ignore_late_begin(self):
+        self.keyboard("navigate", sequence=3, monitorStep=1, workspaceStep=3)
+        self.keyboard(sequence=1)
+        self.assertEqual(self.controller.drag.selected_monitor, "DP-6")
+        self.assertEqual(self.controller.drag.selected_name, "14")
+        self.keyboard("commit", sequence=4, monitorStep=1, workspaceStep=3)
+        self.assertIn('workspace="14",follow=false', self.ipc.dispatches[0])
+
+    def test_pin_and_plain_navigation_keep_keyboard_selection_on_pointer_tick(self):
+        self.keyboard("pin", sequence=2)
+        self.keyboard(sequence=1)
+        self.assertEqual(self.controller.drag.mode, "keyboard")
+        self.keyboard("navigate", direction="right")
+        self.keyboard("navigate", direction="down")
+        self.controller.tick()
+        self.assertEqual(self.controller.drag.selected_name, "12")
+        self.assertEqual(self.output[-1]["hovered"], "12")
+        self.keyboard("cancel")
+        self.assertEqual(self.ipc.dispatches, [])
+
+    def test_source_focus_geometry_workspace_and_ownership_guards(self):
+        for mutation in ("focus", "geometry", "workspace", "ownership"):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                self.keyboard()
+                if mutation == "focus": self.ipc.data["activewindow"] = {"address": "0xother"}
+                if mutation == "geometry": self.ipc.data["monitors"][0]["x"] = 100
+                if mutation == "workspace": self.ipc.data["clients"][0]["workspace"]["id"] = 99
+                if mutation == "ownership": self.blocks.return_value = {"eDP-1": 2, "DP-6": 1}
+                self.keyboard("commit", digit=2)
+                self.assertEqual(self.ipc.dispatches, [])
+
+    def test_keyboard_tick_cancels_closed_source(self):
+        self.keyboard()
+        self.ipc.data["clients"] = []
+        self.controller.tick()
+        self.assertIsNone(self.controller.drag)
+        self.assertEqual(self.ipc.dispatches, [])
+
+
+class KeyboardMonitorTelemetryTests(unittest.TestCase):
+    setUp = KeyboardTests.setUp
+    keyboard = KeyboardTests.keyboard
+
+    def test_screencopy_telemetry_does_not_cancel_own_keyboard_overview(self):
+        self.keyboard()
+        monitor = self.ipc.data["monitors"][0]
+        monitor.update(directScanoutBlockedBy=["RECORD"], focused=True, refreshRate=59.999)
+        self.controller.tick()
+        self.assertIsNotNone(self.controller.drag)
+        self.keyboard("commit", digit=2)
+        self.assertEqual(len(self.ipc.dispatches), 1)
+
+    def test_topology_and_active_workspace_changes_cancel_keyboard(self):
+        for field, value in (("x", 100), ("scale", 2), ("activeWorkspace", {"id": 77})):
+            with self.subTest(field=field):
+                self.keyboard(token=field)
+                original = self.ipc.data["monitors"][0][field]
+                self.ipc.data["monitors"][0][field] = value
+                self.controller.tick()
+                self.assertIsNone(self.controller.drag)
+                self.assertEqual(self.ipc.dispatches, [])
+                self.ipc.data["monitors"][0][field] = original
+
+
+class KeyboardPointerSourceTests(unittest.TestCase):
+    setUp = KeyboardTests.setUp
+    keyboard = KeyboardTests.keyboard
+
+    def test_pointer_snapshot_moves_exact_unfocused_window_after_pointer_and_focus_change(self):
+        self.source["mode"] = "pointer"
+        self.ipc.data["activewindow"] = {"address": "0xother"}
+        self.keyboard()
+        self.ipc.data["cursorpos"] = {"x": 2000, "y": 500}
+        self.ipc.data["activewindow"] = {"address": "0xthird"}
+        self.controller.tick()
+        self.assertIsNotNone(self.controller.drag)
+        self.keyboard("commit", digit=2)
+        self.assertEqual(len(self.ipc.dispatches), 1)
+        self.assertIn('hl.get_window("address:0xabc")', self.ipc.dispatches[0])
+        self.assertNotIn("hl.get_active_window()", self.ipc.dispatches[0])
+
+    def test_pointer_snapshot_still_cancels_if_source_changes_workspace(self):
+        self.source["mode"] = "pointer"
+        self.ipc.data["activewindow"] = {"address": "0xother"}
+        self.keyboard()
+        self.ipc.data["clients"][0]["workspace"] = {"id": 3, "name": "3"}
+        self.keyboard("commit", digit=2)
+        self.assertEqual(self.ipc.dispatches, [])
+
+
+class KeyboardFiveSlotTests(unittest.TestCase):
+    setUp = KeyboardTests.setUp
+    keyboard = KeyboardTests.keyboard
+
+    def test_keyboard_uses_same_five_base_slots_as_mouse_and_unavailable_digit_never_moves(self):
+        self.keyboard()
+        self.assertEqual([c["label"] for c in self.controller.drag.cards if c["monitor"] == "eDP-1"], ["1", "2", "3", "4", "5"])
+        self.keyboard("commit", digit=10)
+        self.assertIsNone(self.controller.drag)
+        self.assertEqual(self.ipc.dispatches, [])
+
+    def test_existing_sixth_workspace_is_visible_and_numeric_destination(self):
+        self.ipc.data["workspaces"].append({"id": 6, "name": "6", "monitor": "eDP-1"})
+        self.keyboard()
+        self.assertEqual([c["label"] for c in self.controller.drag.cards if c["monitor"] == "eDP-1"], ["1", "2", "3", "4", "5", "6"])
+        self.keyboard("commit", digit=6)
+        self.assertEqual(len(self.ipc.dispatches), 1)
+        self.assertIn('workspace="6",follow=false', self.ipc.dispatches[0])

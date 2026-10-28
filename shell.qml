@@ -23,11 +23,22 @@ ShellRoot {
     property color accent: "#8aadf4"
     readonly property bool active: dashboard.state === "dragging"
     readonly property bool previewing: active && dashboard.mode === "preview"
+    readonly property bool keyboardMode: active && dashboard.mode === "keyboard"
+    readonly property bool keyboardOverview: active && String(dashboard.mode).indexOf("keyboard") === 0
+    readonly property bool motionEnabled: dashboard.animationsEnabled !== false && dashboard.animationPreset !== "none"
+    readonly property int hoverDuration: !motionEnabled ? 0 : dashboard.animationPreset === "quick" ? 90 : 130
+    readonly property int openingDuration: !motionEnabled ? 0 : dashboard.animationPreset === "quick" ? 80 : 160
     readonly property bool polish: language.indexOf("pl") === 0
 
     function send(command, token, position) {
         if (backend.running && ready && !(command === "begin" && previewPending))
             backend.write(JSON.stringify({command: command, token: token || "manual", pointer: position ? JSON.parse(position) : null}) + "\n")
+    }
+    function keyboardAction(action, detail) {
+        if (!backend.running || !ready || !keyboardMode) return
+        const message = {command: "keyboard", token: dashboard.token, action: action}
+        if (detail) for (const key in detail) message[key] = detail[key]
+        backend.write(JSON.stringify(message) + "\n")
     }
     function receive(line) {
         try {
@@ -92,6 +103,14 @@ ShellRoot {
     Timer { id: restart; interval: 1000; onTriggered: backend.running = true }
     IpcHandler {
         target: "workspaceDrag"
+        function keyboard(message: string): void {
+            if (backend.running && root.ready && !root.previewPending) {
+                try {
+                    const action = JSON.parse(message)
+                    if (action.command === "keyboard") backend.write(JSON.stringify(action) + "\n")
+                } catch (error) { console.warn("Invalid keyboard action") }
+            }
+        }
         function begin(token: string, position: string): void { root.send("begin", token, position) }
         function end(token: string, position: string): void { root.send("end", token, position) }
         function cancel(token: string): void { root.send("cancel", token) }
@@ -141,17 +160,33 @@ ShellRoot {
         anchors { top: true; bottom: true; left: true; right: true }
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "workspace-drag"
-        WlrLayershell.keyboardFocus: root.previewing ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: (root.previewing || root.keyboardMode) ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         mask: Region { width: root.previewing ? panel.width : 0; height: root.previewing ? panel.height : 0 }
 
         Rectangle {
             anchors.fill: parent
+            opacity: root.active ? 1 : 0
+            Behavior on opacity { enabled: root.active; NumberAnimation { duration: root.openingDuration; easing.type: Easing.OutCubic } }
             Material.theme: Material.Dark
             Material.accent: root.accent
             Material.background: root.background
             Material.foreground: root.foreground
-            focus: root.previewing
-            Keys.onEscapePressed: if (root.previewing) root.send("cancel", root.dashboard.token)
+            focus: root.previewing || root.keyboardMode
+            Keys.onPressed: event => {
+                if (root.keyboardMode) {
+                    event.accepted = true
+                    if (event.key === Qt.Key_Escape) root.keyboardAction("cancel")
+                    else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) root.keyboardAction("commit")
+                    else if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) root.keyboardAction("commit", {digit: event.key === Qt.Key_0 ? 10 : event.key - Qt.Key_0})
+                    else if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) root.keyboardAction("navigate", {direction: "left"})
+                    else if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) root.keyboardAction("navigate", {direction: "right"})
+                    else if (event.key === Qt.Key_Up) root.keyboardAction("navigate", {direction: "up"})
+                    else if (event.key === Qt.Key_Down) root.keyboardAction("navigate", {direction: "down"})
+                } else if (root.previewing && event.key === Qt.Key_Escape) {
+                    root.send("cancel", root.dashboard.token)
+                    event.accepted = true
+                }
+            }
             color: Qt.rgba(root.background.r, root.background.g, root.background.b, root.dashboard.demo ? 1 : (root.dashboard.backgroundOpacity || .72))
             Text {
                 textFormat: Text.PlainText
@@ -165,6 +200,9 @@ ShellRoot {
                 x: 48; y: 64
                 text: root.previewing ? (root.polish ? "Bieżąca zawartość pulpitów. Esc zamyka podgląd." : "Current workspace contents. Esc closes preview.") : root.dashboard.demo
                     ? (root.polish ? "Podgląd układu. Zamknie się automatycznie." : "Layout preview. Closes automatically.")
+                    : root.keyboardOverview ? (root.keyboardMode
+                        ? (root.polish ? "Puść modyfikatory · ← → / Tab: monitor · ↑ ↓: pulpit · Cyfra / Enter: przenieś · Esc: anuluj" : "Release modifiers · ← → / Tab: monitor · ↑ ↓: workspace · Digit / Enter: move · Esc: cancel")
+                        : root.dashboard.keyboardPrefix + (root.polish ? " · Cyfra: przenieś · ← →: monitor · ↑ ↓: pulpit · Spacja: przypnij · Puść: anuluj" : " · Digit: move · ← →: monitor · ↑ ↓: workspace · Space: pin · Release: cancel"))
                     : (root.polish ? "Wskaż podgląd i puść przycisk. Esc anuluje." : "Point at a preview and release. Esc cancels.")
                 color: root.foreground; opacity: 0.7
                 font.pixelSize: 15
@@ -235,6 +273,7 @@ ShellRoot {
                     id: card
                     required property var modelData
                     readonly property bool selected: !modelData.disabled && root.hovered === modelData.name
+                    readonly property bool sourceWorkspace: !!root.dashboard.source && root.dashboard.sourceWorkspace === modelData.name
                     readonly property var workspaceMonitor: root.monitorData(modelData.monitor)
                     x: modelData.x; y: modelData.y
                     width: modelData.width; height: modelData.height
@@ -242,22 +281,27 @@ ShellRoot {
                     scale: selected ? root.dashboard.zoom : 1
                     radius: root.dashboard.rounding || 0
                     opacity: modelData.disabled ? .45 : 1
-                    color: Qt.lighter(root.background, 1.3)
-                    border.width: selected ? 3 : 1
-                    border.color: selected ? root.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, .24)
-                    Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+                    color: sourceWorkspace ? Qt.tint(Qt.lighter(root.background, 1.3), Qt.rgba(root.accent.r, root.accent.g, root.accent.b, selected ? .28 : .16)) : Qt.lighter(root.background, selected ? 1.6 : 1.3)
+                    border.width: selected || sourceWorkspace ? 3 : 1
+                    border.color: selected && sourceWorkspace ? root.foreground : selected || sourceWorkspace ? root.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, .24)
+                    Behavior on scale { NumberAnimation { duration: root.hoverDuration; easing.type: Easing.OutCubic } }
+                    Behavior on color { ColorAnimation { duration: root.hoverDuration; easing.type: Easing.OutCubic } }
+                    Behavior on border.color { ColorAnimation { duration: root.hoverDuration; easing.type: Easing.OutCubic } }
                     Text {
                         textFormat: Text.PlainText
                         x: 12; y: 9
                         width: parent.width - 24; elide: Text.ElideRight
-                        text: (root.polish ? "Pulpit " : "Workspace ") + (card.modelData.label || card.modelData.name) + (root.dashboard.sourceWorkspace === card.modelData.name ? "  ●" : "")
+                        text: (root.polish ? "Pulpit " : "Workspace ") + (card.modelData.label || card.modelData.name)
                         color: root.foreground; font.pixelSize: 14; font.bold: true
                     }
                     Text {
                         textFormat: Text.PlainText
                         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 9 }
-                        text: card.modelData.disabled ? (root.polish ? "Niedostępny: pulpit na innym monitorze" : "Unavailable: workspace on another monitor") : card.modelData.monitor
-                        color: root.foreground; opacity: .65; font.pixelSize: 11
+                        text: card.modelData.disabled ? (root.polish ? "Niedostępny: pulpit na innym monitorze" : "Unavailable: workspace on another monitor") : card.sourceWorkspace ? (root.polish ? "Tu jest okno" : "Window source") + " · " + card.modelData.monitor : card.modelData.monitor
+                        elide: Text.ElideRight
+                        color: card.sourceWorkspace ? root.accent : root.foreground
+                        opacity: card.sourceWorkspace ? 1 : .65
+                        font.pixelSize: 11; font.bold: card.sourceWorkspace
                     }
                     Item {
                         id: miniature
@@ -344,7 +388,7 @@ ShellRoot {
             }
             Rectangle {
                 id: dragGhost
-                visible: !root.previewing
+                visible: root.dashboard.mode === "drag"
                 property var sourceData: root.dashboard.sourceClient || ({})
                 property var captureToplevel: root.toplevel(sourceData.address || "")
                 x: Math.max(0, Math.min(root.pointer.localX + 22, panel.width - width - 8))

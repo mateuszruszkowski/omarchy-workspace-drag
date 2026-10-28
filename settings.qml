@@ -26,9 +26,15 @@ ShellRoot {
         return match ? match[1] : fallback
     }
     function draft() {
-        return {modifiers: [superKey.checked ? "SUPER" : "", altKey.checked ? "ALT" : "", ctrlKey.checked ? "CTRL" : "", shiftKey.checked ? "SHIFT" : ""].filter(x => x !== ""), mouseButton: ["left", "right", "middle"][mouse.currentIndex], backgroundOpacity: Math.round(dimming.value) / 100, previewMode: previews.currentIndex === 0 ? "thumbnails" : "titles", cardScale: Math.round(cardScale.value) / 100, zoom: Math.round(hoverZoom.value) / 100}
+        return {keyboardSource: keyboardSource.currentIndex === 1 ? "pointer" : "active", keyboardEnabled: keyboardEnabled.checked, keyboardModifiers: [keyboardSuper.checked ? "SUPER" : "", keyboardAlt.checked ? "ALT" : "", keyboardCtrl.checked ? "CTRL" : "", keyboardShift.checked ? "SHIFT" : ""].filter(x => x !== ""), modifiers: [superKey.checked ? "SUPER" : "", altKey.checked ? "ALT" : "", ctrlKey.checked ? "CTRL" : "", shiftKey.checked ? "SHIFT" : ""].filter(x => x !== ""), mouseButton: ["left", "right", "middle"][mouse.currentIndex], backgroundOpacity: Math.round(dimming.value) / 100, previewMode: previews.currentIndex === 0 ? "thumbnails" : "titles", cardScale: Math.round(cardScale.value) / 100, zoom: Math.round(hoverZoom.value) / 100, animationPreset: ["none", "quick", "smooth"][animations.currentIndex]}
     }
     function populate(data) {
+        keyboardSource.currentIndex = data.keyboardSource === "pointer" ? 1 : 0
+        keyboardEnabled.checked = data.keyboardEnabled
+        keyboardSuper.checked = data.keyboardModifiers.indexOf("SUPER") >= 0
+        keyboardAlt.checked = data.keyboardModifiers.indexOf("ALT") >= 0
+        keyboardCtrl.checked = data.keyboardModifiers.indexOf("CTRL") >= 0
+        keyboardShift.checked = data.keyboardModifiers.indexOf("SHIFT") >= 0
         superKey.checked = data.modifiers.indexOf("SUPER") >= 0
         altKey.checked = data.modifiers.indexOf("ALT") >= 0
         ctrlKey.checked = data.modifiers.indexOf("CTRL") >= 0
@@ -38,6 +44,7 @@ ShellRoot {
         hoverZoom.value = Math.round(data.zoom * 100)
         dimming.value = Math.round(data.backgroundOpacity * 100)
         previews.currentIndex = data.previewMode === "thumbnails" ? 0 : 1
+        animations.currentIndex = ["none", "quick", "smooth"].indexOf(data.animationPreset)
     }
     function edited() {
         if (saved !== null && !busy) { phase = "editing"; message = "Zmiany czekają na zapisanie." }
@@ -166,6 +173,32 @@ ShellRoot {
                         }
                     }
                     GroupBox {
+                        title: "Przenoszenie klawiaturą"
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            anchors.fill: parent
+                            Label { text: "Okno przenoszone skrótem klawiatury" }
+                            ComboBox {
+                                id: keyboardSource
+                                Layout.fillWidth: true
+                                model: ["Aktywne okno", "Okno pod kursorem"]
+                                Accessible.name: "Źródło okna dla skrótu klawiatury"
+                                onActivated: root.edited()
+                            }
+                            Label { text: "Okno jest wybierane w chwili naciśnięcia skrótu. Gdy pod kursorem nakłada się kilka okien, przegląd nie otworzy się."; wrapMode: Text.WordWrap; Layout.fillWidth: true; opacity: .75 }
+                            CheckBox { id: keyboardEnabled; text: "Włącz skrót klawiatury"; onToggled: root.edited() }
+                            RowLayout {
+                                CheckBox { id: keyboardSuper; text: "Super"; onToggled: root.edited() }
+                                CheckBox { id: keyboardAlt; text: "Alt"; onToggled: root.edited() }
+                                CheckBox { id: keyboardCtrl; text: "Ctrl"; onToggled: root.edited() }
+                                CheckBox { id: keyboardShift; text: "Shift"; onToggled: root.edited() }
+                            }
+                            Label { text: "Wybierz co najmniej dwa modyfikatory. Alt oznacza lewy Alt; prawy Alt (AltGr) służy polskim znakom."; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: "Cyfra widocznego pulpitu: przenieś wybrane okno · ← →: monitor · ↑ ↓: pulpit · Enter: przenieś · Spacja: przypnij przegląd · Esc: anuluj"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: "Po przypięciu puść modyfikatory. Tab / Shift+Tab zmienia monitor. Alt+Shift+Tab zachowuje dotychczasową akcję."; wrapMode: Text.WordWrap; Layout.fillWidth: true; opacity: .75 }
+                        }
+                    }
+                    GroupBox {
                         title: "Wygląd przeglądu"
                         Layout.fillWidth: true
                         ColumnLayout {
@@ -205,17 +238,16 @@ ShellRoot {
                                 Accessible.name: "Zawartość podglądów pulpitów"
                                 onActivated: root.edited()
                             }
-                            Button {
-                                text: "Podgląd"
-                                enabled: !root.busy
-                                onClicked: {
-                                    const appearance = root.draft()
-                                    previewer.command = [root.launcher, "preview", JSON.stringify({backgroundOpacity: appearance.backgroundOpacity, previewMode: appearance.previewMode, cardScale: appearance.cardScale, zoom: appearance.zoom})]
-                                    root.previewStarting = true
-                                    root.message = "Otwieranie podglądu…"
-                                    previewer.running = true
-                                }
+                            Label { text: "Animacje" }
+                            ComboBox {
+                                id: animations
+                                Layout.fillWidth: true
+                                model: ["Wyłączone", "Szybkie", "Płynne"]
+                                Accessible.name: "Styl animacji przeglądu"
+                                onActivated: root.edited()
                             }
+                            Label { text: "Przenikanie przy otwarciu i płynność podświetlenia. Wyłączenie animacji w systemie ma pierwszeństwo."; wrapMode: Text.WordWrap; Layout.fillWidth: true; opacity: 0.75 }
+
                         }
                     }
                 }
@@ -242,7 +274,18 @@ ShellRoot {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Button { text: "Domyślne"; enabled: root.saved !== null && !root.busy; onClicked: { root.populate({modifiers: ["SUPER", "ALT"], mouseButton: "left", backgroundOpacity: 0.72, previewMode: "thumbnails", cardScale: 1, zoom: 1.15}); root.edited() } }
+                Button {
+                    text: "Podgląd"
+                    enabled: !root.busy
+                    onClicked: {
+                        const appearance = root.draft()
+                        previewer.command = [root.launcher, "preview", JSON.stringify({backgroundOpacity: appearance.backgroundOpacity, previewMode: appearance.previewMode, cardScale: appearance.cardScale, zoom: appearance.zoom, animationPreset: appearance.animationPreset})]
+                        root.previewStarting = true
+                        root.message = "Otwieranie podglądu…"
+                        previewer.running = true
+                    }
+                }
+                Button { text: "Domyślne"; enabled: root.saved !== null && !root.busy; onClicked: { root.populate({keyboardSource: "active", keyboardEnabled: true, keyboardModifiers: ["ALT", "SHIFT"], modifiers: ["SUPER", "ALT"], mouseButton: "left", backgroundOpacity: 0.72, previewMode: "thumbnails", cardScale: 1, zoom: 1.15, animationPreset: "smooth"}); root.edited() } }
                 Button { text: "Wczytaj ponownie"; enabled: !root.busy; onClicked: { root.phase = "loading"; root.message = "Wczytywanie ustawień…"; reader.running = true } }
                 Item { Layout.fillWidth: true }
             }

@@ -2,6 +2,7 @@
 """Install this user-owned extension. Never reloads Hyprland or starts processes."""
 import argparse
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ PLUGIN_ID = "local.workspace-drag"
 PLUGIN = CONFIG / "omarchy/plugins" / PLUGIN_ID
 PLUGIN_SOURCE = SOURCE / "bar-plugin"
 PLUGIN_MARKER = ".workspace-drag-managed"
+PREVIOUS_KEYBOARD_BINDINGS_HASH = "a4cdbdecfaf3952affcbce42c7358f7c012b162a00d9939478cf74722cd0e988"
 
 
 def owned_plugin():
@@ -78,10 +80,14 @@ def main():
             content = installed_bindings.read_text()
             if content != (SOURCE / "bindings.lua").read_text():
                 try:
-                    initial = legacy_shortcut(content)
+                    previous_managed = (SOURCE / "bindings.lua").read_text().split("\n-- workspace-drag keyboard overview v1")[0].rstrip() + "\n"
+                    initial = parse_shortcut((SHARE / "shortcut.conf").read_text()) if (content == previous_managed or hashlib.sha256(content.encode()).hexdigest() == PREVIOUS_KEYBOARD_BINDINGS_HASH) and (SHARE / "shortcut.conf").exists() else legacy_shortcut(content)
                 except ValueError as error:
                     parser.error(str(error))
                 shortcut_content = shortcut(initial) + "\n"
+        source_path = SHARE / "keyboard-source.conf"
+        if source_path.exists() and source_path.read_text().strip() not in ("active", "pointer"):
+            parser.error("Invalid keyboard-source.conf; refusing to overwrite")
         shortcut_path = SHARE / "shortcut.conf"
         if shortcut_path.exists():
             try:
@@ -105,8 +111,8 @@ def main():
         shutil.copy2(shell_path, backup / "shell.json")
     if not args.uninstall:
         SHARE.mkdir(parents=True, exist_ok=True)
-        for name in ("shell.qml", "settings.qml", "backend.py", "settings.py", "open_settings.py", "workspace-drag", "bindings.lua", "shortcut.conf", "config.json", "README.md", "VERIFICATION.md"):
-            if name in ("config.json", "shortcut.conf") and (SHARE / name).exists():
+        for name in ("shell.qml", "settings.qml", "backend.py", "settings.py", "open_settings.py", "workspace-drag", "bindings.lua", "shortcut.conf", "keyboard.conf", "keyboard-source.conf", "config.json", "README.md", "VERIFICATION.md"):
+            if name in ("config.json", "shortcut.conf", "keyboard.conf", "keyboard-source.conf") and (SHARE / name).exists():
                 continue
             destination = SHARE / name
             temporary = destination.with_suffix(destination.suffix + ".new")
