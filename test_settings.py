@@ -459,6 +459,7 @@ class KeyboardSourceInstallerTests(unittest.TestCase):
         start = content.index('local keyboard_source =')
         end = content.index('if hl.on and', start)
         previous = (content[:start] + content[end:]).replace('%d %s %d %d %d %d %s", command,', '%d %s %d %d %d %d", command,').replace('digit or 0, keyboard_source))', 'digit or 0))').replace('    local window = keyboard_source == "pointer" and window_at_pointer() or nil\n    if keyboard_source == "active" then window = hl.get_active_window() end', '    local window = hl.get_active_window()')
+        previous = previous.replace(', [104]="commit"', '')
         previous = previous.replace('    if modifiers[code] then down[code] = state == 1 end\n    if hl.get_current_submap() ~= "" then\n      if session then cancel() end\n      blocked = not released()\n      return\n    end\n    if modifiers[code] then', '    if modifiers[code] then\n      down[code] = state == 1').replace(' or hl.get_current_submap() ~= "" then return end', ' then return end')
         self.app.mkdir(parents=True)
         (self.app / "shortcut.conf").write_text("SUPER + ALT + mouse:272\n")
@@ -474,3 +475,30 @@ class KeyboardSourceInstallerTests(unittest.TestCase):
         (self.app / "keyboard-source.conf").write_text("pointer; execute\n")
         self.assertNotEqual(self.install().returncode, 0)
         self.assertEqual((self.app / "keyboard-source.conf").read_text(), "pointer; execute\n")
+
+
+class KeypadEnterConflictTests(unittest.TestCase):
+    def test_keypad_enter_named_and_physical_bindings_are_conflicts(self):
+        for binding in ({"modmask": 9, "key": "KP_Enter"}, {"modmask": 9, "keycode": 104}):
+            with self.subTest(binding=binding), self.assertRaises(ValueError):
+                settings.check_keyboard_conflicts(settings.DEFAULTS, [binding])
+        settings.check_keyboard_conflicts(settings.DEFAULTS, [{"modmask": 9, "key": "KP_Enter", "description": settings.KEYBOARD_DESCRIPTION}])
+
+
+class KeypadEnterInstallerTests(unittest.TestCase):
+    setUp = InstallerTest.setUp
+    install = InstallerTest.install
+
+    def test_exact_f533908_bindings_upgrade_preserves_operator_settings(self):
+        previous = (SOURCE / "bindings.lua").read_text().replace(', [104]="commit"', '')
+        import hashlib
+        self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(), "0c5a1dc626c5625e2911a4b7e81bde2ef0a1c02cbf313537d920382125cffddd")
+        self.app.mkdir(parents=True)
+        (self.app / "bindings.lua").write_text(previous)
+        (self.app / "shortcut.conf").write_text("SUPER + ALT + mouse:272\n")
+        (self.app / "keyboard.conf").write_text("ALT + SHIFT\n")
+        (self.app / "keyboard-source.conf").write_text("pointer\n")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('[104]="commit"', (self.app / "bindings.lua").read_text())
+        self.assertEqual((self.app / "keyboard-source.conf").read_text(), "pointer\n")

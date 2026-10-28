@@ -162,3 +162,14 @@ overlap = {address="0xaaa", workspace={id=1}, monitor={name="eDP-1"}, at={x=0,y=
 key(64, 1); key(50, 1); key(10, 1)
 assert(count("begin") == 0 and count("commit") == 0)
 ''', source="pointer")
+
+    def test_keypad_enter_commits_selected_workspace_without_cancelling_prefix(self):
+        self.run_lua('''
+key(64, 1); key(50, 1)
+key(116, 1); key(116, 0)
+key(104, 1)
+assert(count("begin") == 1 and count("navigate") == 1)
+assert(count("commit") == 1 and count("cancel") == 0)
+assert(commands[#commands]:match(" %d+ 0 1 0 active$"))
+assert(binds["ALT + SHIFT + code:104"] and not binds["ALT + SHIFT + code:104"].options.non_consuming)
+''')

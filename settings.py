@@ -70,8 +70,8 @@ def parse_shortcut(value, require_canonical=True):
 
 KEYBOARD_MARKER = "-- workspace-drag keyboard overview v1"
 KEYBOARD_DESCRIPTION = "Workspace overview keyboard"
-KEYBOARD_KEYS = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "left", "right", "up", "down", "return", "space"}
-KEYBOARD_CODES = set(range(10, 20)) | {113, 114, 111, 116, 36, 65}
+KEYBOARD_KEYS = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "left", "right", "up", "down", "return", "kp_enter", "space"}
+KEYBOARD_CODES = set(range(10, 20)) | {113, 114, 111, 116, 36, 104, 65}
 
 
 def keyboard_shortcut(draft):

@@ -141,7 +141,7 @@ if hl.on and hl.is_key_down and hl.get_active_window then
       workspace=window.workspace.id, monitor=window.monitor.name, sequence=0, monitorStep=0, workspaceStep=0}
     send("begin")
   end
-  local owned = {[113]="left", [114]="right", [111]="up", [116]="down", [36]="commit", [65]="pin"}
+  local owned = {[113]="left", [114]="right", [111]="up", [116]="down", [36]="commit", [104]="commit", [65]="pin"}
   for code=10,19 do owned[code] = "digit" end
   -- The current event precedes Hyprland's pressed-state update: update it directly.
   _G.workspace_drag_keyboard_hook = hl.on("input.keyboard.key", function(code, time_ms, state)

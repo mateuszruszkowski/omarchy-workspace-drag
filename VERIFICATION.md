@@ -260,3 +260,18 @@ Pointer mode deliberately declines overlapping eligible windows because this
 Hyprland API exposes no reliable stacking query. The panel states this limitation.
 This pass did not repeat physical mouse dragging, reboot or monitor unplug.
 Animation timing was not measured with frame instrumentation.
+
+## Keypad Enter correction — 2026-10-28
+
+- User reported Enter changing the viewed workspace without moving the window.
+  Main Return with arrows passed native tests in both held and pinned modes.
+  The reported workspace-only switch was not reproduced independently.
+- Native keypad Enter did reproduce a missing move: selected local 4, chooser
+  closed, Foot remained on 3. The native key map omitted XKB104. A Lua regression
+  failed before adding that code to the same commit action as main Return.
+- After installing the fix, the identical uinput sequence passed: target4,
+  window4, active views[3,13]. User separately confirmed the action now works.
+- 115 tests pass, including keypad conflict detection and exact prior-version
+  installer migration. No backend or QML movement logic changed.
+- Backup `20261028T023605.003879`; temporary instrumentation removed, installed
+  bindings match source, test window and input daemon closed.

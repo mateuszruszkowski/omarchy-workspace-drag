@@ -23,7 +23,10 @@ PLUGIN_ID = "local.workspace-drag"
 PLUGIN = CONFIG / "omarchy/plugins" / PLUGIN_ID
 PLUGIN_SOURCE = SOURCE / "bar-plugin"
 PLUGIN_MARKER = ".workspace-drag-managed"
-PREVIOUS_KEYBOARD_BINDINGS_HASH = "a4cdbdecfaf3952affcbce42c7358f7c012b162a00d9939478cf74722cd0e988"
+PREVIOUS_KEYBOARD_BINDINGS_HASHES = {
+    "a4cdbdecfaf3952affcbce42c7358f7c012b162a00d9939478cf74722cd0e988",
+    "0c5a1dc626c5625e2911a4b7e81bde2ef0a1c02cbf313537d920382125cffddd",
+}
 
 
 def owned_plugin():
@@ -81,7 +84,7 @@ def main():
             if content != (SOURCE / "bindings.lua").read_text():
                 try:
                     previous_managed = (SOURCE / "bindings.lua").read_text().split("\n-- workspace-drag keyboard overview v1")[0].rstrip() + "\n"
-                    initial = parse_shortcut((SHARE / "shortcut.conf").read_text()) if (content == previous_managed or hashlib.sha256(content.encode()).hexdigest() == PREVIOUS_KEYBOARD_BINDINGS_HASH) and (SHARE / "shortcut.conf").exists() else legacy_shortcut(content)
+                    initial = parse_shortcut((SHARE / "shortcut.conf").read_text()) if (content == previous_managed or hashlib.sha256(content.encode()).hexdigest() in PREVIOUS_KEYBOARD_BINDINGS_HASHES) and (SHARE / "shortcut.conf").exists() else legacy_shortcut(content)
                 except ValueError as error:
                     parser.error(str(error))
                 shortcut_content = shortcut(initial) + "\n"
