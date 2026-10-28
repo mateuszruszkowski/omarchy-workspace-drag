@@ -2,14 +2,19 @@
 
 Hold **Super+Alt+left mouse button** over a normal window. The source display shows
 normal workspaces arranged in separate circles around each monitor label.
-Existing workspaces and individually configured empty workspaces are included.
-When Omarchy provides its per-monitor block map, workspace cards use local slot
-numbers: for example, Hyprland workspace 13 is shown as workspace 3 on the monitor
-that owns block 11–20. Real workspace names still identify previews and drop
-targets. If two real targets share a displayed number on one monitor, their
-labels include the internal ID to distinguish them. Existing guest workspaces remain on their actual monitor. Empty targets
-are declared by monitor, persistent or default rules; appearance-only rules do
-not create extra cards. Without a usable block mapping, labels retain real names.
+Each monitor with an Omarchy block mapping always has local slots **1–5**,
+including empty slots. Additional existing normal workspaces remain available.
+The monitor circles therefore stay present even before windows are opened.
+For example, local slot 3 on DP-6 uses Hyprland ID 13; identity remains separate
+from its displayed number. Colliding labels for additional guest workspaces
+include their real IDs. A base slot currently located on another monitor is
+shown once, dimmed and unavailable, rather than silently moving that workspace.
+Without a usable block mapping, the legacy existing/explicit-rule fallback
+remains available. Appearance-only rules never create extra cards.
+
+Dropping onto an empty mapped slot binds that workspace to its intended monitor
+and moves the exact window silently in one checked Lua operation. Existing
+workspaces are never moved wholesale by this action.
 The dimmed desktop remains visible behind the overview. A small dragged-window
 preview follows the pointer. The virtual STUDIO-VIRTUAL output is hidden by default;
 its group is included when it is the source display. Move to a preview and release the mouse
@@ -124,7 +129,7 @@ preserves fields it does not edit. They load at the next drag without restart.
 | `timeoutSeconds` | 25 | Cancel a stuck hold. |
 | `pollMilliseconds` | 35 | Cursor update interval during an active drag. |
 | `restoreCursor` | true | Return to the source location after dropping or cancelling. |
-| `defaultWorkspaces` | 1 through 10 | Fallback used only when no individual normal workspace rules exist. |
+| `defaultWorkspaces` | 1 through 10 | Legacy fallback for an unmapped source monitor when no individual normal workspace rules exist. |
 
 The dashboard uses Omarchy's current `colors.toml`, watches language changes, and
 supports Polish and English. If no language file exists, it follows `LANG`. Rounded

@@ -2,6 +2,8 @@ import copy
 import os
 from pathlib import Path
 import tempfile
+import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -114,7 +116,7 @@ class WorkspaceDragTests(unittest.TestCase):
                          lambda: self.ipc.data["monitors"].pop()):
             self.setUp()
             self.begin()
-            self.aim("5")
+            self.aim("15")
             mutation()
             self.controller.finish("a")
             self.assertFalse(self.ipc.dispatches)
@@ -226,7 +228,7 @@ class WorkspaceDragTests(unittest.TestCase):
             {"workspaceString": "7", "persistent": True},
             {"workspaceString": "8", "default": True}]
         self.begin()
-        self.assertEqual([c["name"] for c in self.controller.drag.cards], ["1", "2", "7", "8", "4", "5"])
+        self.assertEqual([c["name"] for c in self.controller.drag.cards], ["1", "2", "3", "4", "5", "11", "12", "13", "14", "15"])
 
     def test_only_incidental_rules_preserve_configured_default_fallback(self):
         monitors = [logical_monitor(m) for m in self.ipc.data["monitors"]]
@@ -245,9 +247,10 @@ class WorkspaceDragTests(unittest.TestCase):
         card = next(c for c in self.controller.drag.cards if c["name"] == "13")
         self.assertEqual(card["label"], "3")
         external = [c for c in self.controller.drag.cards if c["monitor"] == "DP-6"]
-        self.assertEqual([(c["name"], c["label"]) for c in external], [("13", "3"), ("4", "4"), ("5", "5"), ("6", "6")])
+        self.assertEqual([(c["name"], c["label"]) for c in external], [("11", "1"), ("12", "2"), ("13", "3"), ("14", "4"), ("15", "5"), ("6", "6")])
         guest = next(c for c in self.controller.drag.cards if c["name"] == "4")
         self.assertEqual(guest["label"], "4")
+        self.assertTrue(guest["disabled"])
         self.assertEqual(next(c for c in self.output[-1]["clients"] if c["address"] == "0xdef")["workspace"]["name"], "13")
         self.assertEqual(self.output[-1]["sourceWorkspace"], "1")
         self.assertEqual(self.output[-1]["sourceWorkspaceLabel"], "1")
@@ -257,18 +260,18 @@ class WorkspaceDragTests(unittest.TestCase):
         self.controller.finish("a")
         self.assertIn('workspace="13",follow=false', self.ipc.dispatches[0])
 
-    def test_colliding_guest_and_local_labels_stay_distinct_and_dispatch_local_id(self):
+    def test_reserved_guest_id_is_not_duplicated_on_its_current_monitor(self):
         self.ipc.data["workspaces"].append({"id": 14, "name": "14", "monitor": "DP-6"})
         self.begin()
         external = [c for c in self.controller.drag.cards if c["monitor"] == "DP-6"]
         self.assertEqual([(c["name"], c["label"]) for c in external],
-                         [("4", "4 (ID 4)"), ("14", "4 (ID 14)"), ("5", "5")])
+                         [("11", "1"), ("12", "2"), ("13", "3"), ("14", "4"), ("15", "5")])
         self.assertEqual(next(c for c in self.controller.drag.cards if c["name"] == "1")["label"], "1")
         self.aim("14")
         self.controller.finish("a")
         self.assertIn('workspace="14",follow=false', self.ipc.dispatches[0])
 
-    def test_colliding_source_label_matches_card_and_dispatches_guest_id(self):
+    def test_source_label_matches_card_and_misassigned_destination_cancels(self):
         self.ipc.data["monitors"][1]["activeWorkspace"] = {"id": 14}
         self.ipc.data["clients"][0].update(workspace={"id": 14, "name": "14"},
                                              monitor=1, at=[1600, 0], size=[3440, 1440])
@@ -276,12 +279,22 @@ class WorkspaceDragTests(unittest.TestCase):
         self.ipc.data["cursorpos"] = {"x": 1800, "y": 400}
         self.begin()
         self.assertEqual(self.output[-1]["sourceWorkspace"], "14")
-        self.assertEqual(self.output[-1]["sourceWorkspaceLabel"], "4 (ID 14)")
+        self.assertEqual(self.output[-1]["sourceWorkspaceLabel"], "4")
         self.assertEqual(self.output[-1]["sourceWorkspaceLabel"],
                          next(c for c in self.controller.drag.cards if c["name"] == "14")["label"])
         self.aim("4")
         self.controller.finish("a")
-        self.assertIn('workspace="4",follow=false', self.ipc.dispatches[0])
+        self.assertFalse(self.ipc.dispatches)
+
+    def test_extra_guest_and_local_labels_remain_distinct(self):
+        self.ipc.data["workspaces"] += [{"id": 8, "name": "8", "monitor": "DP-6"},
+                                        {"id": 18, "name": "18", "monitor": "DP-6"}]
+        self.begin()
+        self.assertEqual({c["name"]: c["label"] for c in self.controller.drag.cards if c["name"] in ("8", "18")},
+                         {"8": "8 (ID 8)", "18": "8 (ID 18)"})
+        self.aim("18")
+        self.controller.finish("a")
+        self.assertIn('workspace="18",follow=false', self.ipc.dispatches[0])
 
     def test_source_label_uses_source_monitor_and_keeps_global_identity(self):
         self.ipc.data["monitors"][1]["activeWorkspace"] = {"id": 13}
@@ -301,12 +314,117 @@ class WorkspaceDragTests(unittest.TestCase):
                                         {"id": -1337, "name": "Praca Żółć", "monitor": "DP-6"}]
         self.controller.preview("preview-a", {})
         labels = {c["name"]: c["label"] for c in self.output[-1]["cards"]}
-        self.assertEqual(labels, {"1": "1", "2": "2", "4": "4", "5": "5", "13": "3", "Praca Żółć": "Praca Żółć"})
+        self.assertEqual(labels, {**{str(i): str(i) for i in range(1, 6)},
+                                  **{str(i + 10): str(i) for i in range(1, 6)}, "Praca Żółć": "Praca Żółć"})
         self.controller.finish("preview-a")
         self.blocks.return_value = {}
         self.controller.preview("preview-b", {})
         self.assertEqual(next(c for c in self.output[-1]["cards"] if c["name"] == "13")["label"], "13")
         self.assertEqual(self.blocks.call_count, 2)
+
+    def test_empty_monitors_keep_five_local_slots_without_legacy_phantoms(self):
+        self.ipc.data["workspaces"] = []
+        self.ipc.data["workspacerules"] += [{"workspaceString": "6", "monitor": "eDP-1"},
+                                            {"workspaceString": "18", "persistent": True}]
+        self.controller.preview("empty", {})
+        for group, base in zip(self.controller.drag.groups, (0, 10)):
+            self.assertEqual([c["name"] for c in group["cards"]], [str(base + i) for i in range(1, 6)])
+            self.assertEqual([c["label"] for c in group["cards"]], list("12345"))
+            self.assertFalse(any(c["existing"] or c["disabled"] for c in group["cards"]))
+        self.assertEqual(self.blocks.call_count, 1)
+
+    def test_extra_existing_numeric_named_and_guest_workspaces_remain_unique(self):
+        self.ipc.data["workspaces"] += [{"id": 18, "name": "18", "monitor": "DP-6"},
+                                        {"id": 28, "name": "28", "monitor": "DP-6"},
+                                        {"id": -1337, "name": "Praca", "monitor": "DP-6"}]
+        self.begin()
+        cards = self.controller.drag.cards
+        self.assertEqual(len(cards), len({c["name"] for c in cards}))
+        self.assertEqual({c["name"]: c["label"] for c in cards if not c.get("slot")},
+                         {"18": "8", "28": "28", "Praca": "Praca"})
+        self.assertTrue(next(c for c in cards if c["name"] == "4")["disabled"])
+
+    def test_unmapped_monitor_keeps_legacy_rules(self):
+        self.blocks.return_value = {"eDP-1": 0}
+        self.ipc.data["workspaces"][1].update(id=6, name="6")
+        self.ipc.data["workspacerules"][1]["workspaceString"] = "7"
+        self.begin()
+        self.assertEqual([c["name"] for c in self.controller.drag.cards if c["monitor"] == "DP-6"], ["6", "7"])
+
+    def test_misassigned_slot_is_visible_disabled_and_cannot_be_hit(self):
+        self.begin()
+        self.aim("4")
+        self.controller.tick()
+        self.assertEqual(self.output[-1]["hovered"], "")
+        self.controller.finish("a")
+        self.assertFalse(self.ipc.dispatches)
+
+    def test_target_becoming_misassigned_cancels_release(self):
+        self.begin()
+        self.aim("15")
+        self.ipc.data["workspaces"].append({"id": 15, "name": "15", "monitor": "eDP-1"})
+        self.controller.finish("a")
+        self.assertFalse(self.ipc.dispatches)
+
+    def test_changed_or_removed_block_mapping_cancels_release(self):
+        for mapping in ({"eDP-1": 0, "DP-6": 3}, {}):
+            with self.subTest(mapping=mapping):
+                self.controller.ended.clear()
+                self.blocks.return_value = {"eDP-1": 0, "DP-6": 1}
+                self.begin()
+                self.aim("15")
+                self.blocks.return_value = mapping
+                self.controller.finish("a")
+                self.assertFalse(self.ipc.dispatches)
+        self.assertEqual(self.blocks.call_count, 4)
+
+    def test_hidden_virtual_keeps_five_slots_when_it_is_the_source(self):
+        self.blocks.return_value = {"eDP-1": 0, "DP-6": 1, "STUDIO-VIRTUAL": 2}
+        self.ipc.data["monitors"][1]["name"] = "STUDIO-VIRTUAL"
+        self.ipc.data["monitors"][1]["activeWorkspace"] = {"id": 21}
+        self.ipc.data["clients"][0].update(workspace={"id": 21, "name": "21"}, at=[1600, 0])
+        self.ipc.data["cursorpos"] = {"x": 1800, "y": 100}
+        self.begin()
+        self.assertEqual([c["name"] for c in self.controller.drag.cards if c["monitor"] == "STUDIO-VIRTUAL"],
+                         ["21", "22", "23", "24", "25"])
+
+    @unittest.skipUnless(shutil.which("lua"), "Lua interpreter unavailable")
+    def test_lua_guards_and_new_slot_binding_run_before_any_window_mutation(self):
+        self.begin()
+        self.aim("15")
+        self.controller.finish("a")
+        lua = self.ipc.dispatches[0]
+        self.assertIn('hl.workspace_rule({workspace="15",monitor="DP-6"})', lua)
+        self.assertLess(lua.index("hl.workspace_rule"), lua.index("hl.dsp.window.move"))
+        self.assertNotIn("move({window=w,monitor", lua)
+        # Execute the exact generated Lua with deterministic objects, including races
+        # after the Python snapshot. A failed guard must leave all mutations at zero.
+        for scenario in ("empty", "existing", "wrong-monitor", "missing-monitor", "changed-source", "missing-source"):
+            with self.subTest(scenario=scenario):
+                harness = """
+local scenario = %s
+local calls = {}
+local w = {address="0xabc",workspace={id=scenario=="changed-source" and 2 or 1}}
+local target = scenario=="empty" and nil or {monitor={name=scenario=="wrong-monitor" and "eDP-1" or "DP-6"}}
+if scenario=="empty" then target=nil end
+hl = {
+ get_monitor=function(name) assert(name=="DP-6"); if scenario~="missing-monitor" then return {name=name} end end,
+ get_window=function(address) assert(address=="address:0xabc"); if scenario~="missing-source" then return w end end,
+ get_workspace=function(id) assert(id==15); return target end,
+ workspace_rule=function(rule) assert(rule.workspace=="15" and rule.monitor=="DP-6"); table.insert(calls,"bind") end,
+ dispatch=function(command) table.insert(calls,command) end,
+ dsp={window={
+ fullscreen_state=function(args) assert(args.window==w); return "fullscreen" end,
+ float=function(args) assert(args.window==w); return "float" end,
+ move=function(args) assert(args.window==w and args.workspace=="15" and args.follow==false and args.monitor==nil); return "move" end}}
+}
+local ok = pcall(function() %s end)
+if scenario=="empty" then assert(ok and table.concat(calls,",")=="bind,fullscreen,float,move")
+elseif scenario=="existing" then assert(ok and table.concat(calls,",")=="fullscreen,float,move")
+else assert(not ok and #calls==0) end
+""" % ('"' + scenario + '"', lua)
+                result = subprocess.run(["lua", "-"], input=harness, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_demo_never_moves_real_windows(self):
         self.controller.demo()
@@ -326,13 +444,13 @@ class WorkspaceDragTests(unittest.TestCase):
             self.assertEqual(data["previewMode"], "titles")
             self.assertEqual(data["zoom"], 1.3)
             expected, _ = layout_dashboard(
-                [dict(name=c["name"], label=c["label"], monitor=c["monitor"], existing=c["existing"]) for c in data["cards"]],
+                [{k: v for k, v in c.items() if k not in ("x", "y", "width", "height")} for c in data["cards"]],
                 self.controller.drag.monitor, self.controller.config)
             self.assertEqual(data["cards"], expected)
             self.assertEqual(self.controller.config["cardScale"], 1.7)
             self.assertEqual(data["source"], "")
             self.assertEqual(data["sourceWorkspace"], "")
-            self.assertEqual([c["name"] for c in data["cards"]], ["1", "2", "4", "5"])
+            self.assertEqual([c["name"] for c in data["cards"]], ["1", "2", "3", "4", "5", "11", "12", "13", "14", "15"])
             self.assertEqual([g["monitor"] for g in data["groups"]], ["eDP-1", "DP-6"])
             self.assertEqual(data["clients"][0]["address"], "0xabc")
             self.assertEqual(data["clients"][0]["title"], "PRIVATE NEVER SERIALIZE")
@@ -411,7 +529,7 @@ class WorkspaceDragTests(unittest.TestCase):
         self.ipc.data["clients"] = []
         self.controller.preview("preview-a", {})
         self.assertEqual(self.output[-1]["clients"], [])
-        self.assertEqual(len(self.controller.drag.cards), 4)
+        self.assertEqual(len(self.controller.drag.cards), 10)
         original = self.controller.drag
         self.controller.begin("a")
         self.assertIs(self.controller.drag, original)

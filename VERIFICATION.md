@@ -190,3 +190,31 @@ alone takes input until dismissed.
   are unchanged from the preceding revision. Graphify AST index updated.
 - No physical drag, creation of workspace 14, or reboot was performed in this
   verification pass; routing to colliding targets is covered by IPC unit tests.
+
+## Stable slots and monitor profile cleanup — 2026-10-28
+
+- Omarchy block map is the authority for five base slots per connected mapped
+  monitor. Existing extras remain available; misplaced base slots are disabled
+  without duplicate cards. Fresh mapping and Lua guards protect each drop.
+- 70 tests pass, including execution of generated Lua with absent/changed targets.
+  Independent Sol review approved. QML exits 0 with no errors (63 style/type
+  warnings, one more unqualified warning than the previous revision).
+- Live test launched a disposable foot window on laptop workspace 3 and used the
+  installed begin/end IPC to drop it onto absent ID 14, local slot 4 on DP-6.
+  It arrived tiled on monitor 1/workspace 14. Active workspace IDs remained
+  eDP-1=3, DP-6=13, virtual=21. The test window was closed afterward.
+  This tests the running drop path, not physical mouse-button delivery.
+- Live preview visibly showed local 1–5 around each physical monitor; installed
+  backend snapshot independently returned exactly those ten cards.
+- Removed old explicit 1–3/4–6 pins from user monitors.lua. Updated saved
+  hyprmoncfg profile to enabled manual workspace planning without numbered rules,
+  preserving its existing scratchpad entry and all output geometry. Applied the
+  profile through hyprmoncfg; generated files were not manually edited.
+- Important hyprmoncfg 1.25.1 behavior: disabled planning falls back to sequential
+  groups of three when an unknown output extends a profile. This was reproduced
+  and corrected with explicit enabled/manual planning. Old empty guest workspaces
+  disappeared; the DP-6 bar changed from duplicate 4/5 entries to a single 1–5 set.
+- Baseline backup: `~/.local/state/workspace-drag/backups/slots-20261028T013156`.
+  Physical resolution, refresh, position, scale and transform matched the baseline
+  exactly after profile application. User windows stayed on workspace 3 and 13.
+- Addon installation backup: `20261028T013357.122216`.

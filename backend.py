@@ -127,12 +127,24 @@ def workspace_label(name, monitor, blocks):
     return name
 
 
-def workspace_targets(monitors, workspaces, rules, config, fallback):
+def workspace_targets(monitors, workspaces, rules, config, fallback, blocks=None):
+    blocks = blocks or {}
     targets = {}
+    # A slot has one owner even when a stale workspace is on another monitor.
+    existing = {str(w.get("name", "")): w for w in workspaces}
+    for monitor in monitors:
+        if monitor["name"] not in blocks:
+            continue
+        for slot in range(1, 6):
+            name = str(blocks[monitor["name"]] * 10 + slot)
+            workspace = existing.get(name)
+            targets[name] = {"name": name, "monitor": monitor["name"],
+                             "existing": workspace is not None, "slot": True,
+                             "disabled": workspace is not None and workspace.get("monitor") != monitor["name"]}
     by_name = {m["name"]: m for m in monitors}
     for workspace in workspaces:
         name = str(workspace.get("name", ""))
-        if normal_name(name) and workspace.get("monitor") in by_name:
+        if normal_name(name) and workspace.get("monitor") in by_name and name not in targets:
             targets[name] = {"name": name, "monitor": workspace["monitor"], "existing": True}
     configured = False
     for rule in rules:
@@ -147,12 +159,12 @@ def workspace_targets(monitors, workspaces, rules, config, fallback):
         if name in targets:
             continue
         monitor = monitor_for_rule(rule, monitors, fallback)
-        if monitor:
+        if monitor and monitor["name"] not in blocks:
             targets[name] = {"name": name.removeprefix("name:"), "monitor": monitor["name"], "existing": False}
     if not configured:
         for name in config["defaultWorkspaces"]:
             name = str(name)
-            if normal_name(name):
+            if normal_name(name) and fallback["name"] not in blocks:
                 targets.setdefault(name, {"name": name, "monitor": fallback["name"], "existing": False})
     return sorted(targets.values(), key=lambda t: (next(i for i, m in enumerate(monitors) if m["name"] == t["monitor"]),
                                                    (0, int(t["name"])) if t["name"].isdigit() else (1, t["name"])))
@@ -223,7 +235,7 @@ def pointer_data(pointer, monitor):
 
 def target_at(cards, monitor, pointer):
     x, y = pointer["x"] - monitor["x"], pointer["y"] - monitor["y"]
-    return next((card for card in cards if card["x"] <= x < card["x"] + card["width"]
+    return next((card for card in cards if not card.get("disabled") and card["x"] <= x < card["x"] + card["width"]
                  and card["y"] <= y < card["y"] + card["height"]), None)
 
 
@@ -308,8 +320,8 @@ class Controller:
 
     def dashboard_data(self, monitors, monitor, clients, config):
         visible_monitors = [m for m in monitors if m["name"] not in config["hiddenMonitors"] or m["name"] == monitor["name"]]
-        targets = workspace_targets(visible_monitors, self.ipc.get("workspaces"), self.ipc.get("workspacerules"), config, monitor)
         self.workspace_blocks = load_workspace_blocks()
+        targets = workspace_targets(visible_monitors, self.ipc.get("workspaces"), self.ipc.get("workspacerules"), config, monitor, self.workspace_blocks)
         for target in targets:
             target["label"] = workspace_label(target["name"], target["monitor"], self.workspace_blocks)
         monitor_order = {m["name"]: index for index, m in enumerate(visible_monitors)}
@@ -385,15 +397,29 @@ class Controller:
         source = next((c for c in clients if c["address"] == drag.source["address"]), None)
         if not source or source["workspace"]["id"] != drag.source["workspace"]["id"]:
             return
-        available = workspace_targets(monitors, self.ipc.get("workspaces"), self.ipc.get("workspacerules"), self.config, current_source_monitor)
-        if not any(t["name"] == target["name"] and t["monitor"] == target["monitor"] for t in available):
+        blocks = load_workspace_blocks()
+        available = workspace_targets(monitors, self.ipc.get("workspaces"), self.ipc.get("workspacerules"), self.config, current_source_monitor, blocks)
+        fresh_target = next((t for t in available if t["name"] == target["name"] and t["monitor"] == target["monitor"]
+                             and not t.get("disabled")), None)
+        if not fresh_target or bool(fresh_target.get("slot")) != bool(target.get("slot")):
             return
         address = lua_string("address:" + source["address"])
         workspace = lua_string(selector(target["name"]))
         expected = lua_string(source["address"])
-        self.ipc.dispatch(";".join([
-            f"local w=hl.get_window({address})",
-            f"assert(w and w.address=={expected},'Workspace drag source disappeared')",
+        target_monitor = lua_string(target["monitor"])
+        lookup = (f"local target_ws=hl.get_workspace({int(target['name'])})" if target["name"].isdigit()
+                  else f"local target_ws=nil;for _,ws in ipairs(hl.get_workspaces()) do if ws.name=={lua_string(target['name'])} then target_ws=ws;break end end")
+        guards = [f"local m=hl.get_monitor({target_monitor})",
+                  "assert(m,'Workspace drag target monitor disappeared')",
+                  f"local w=hl.get_window({address})",
+                  f"assert(w and w.address=={expected} and w.workspace and w.workspace.id=={source['workspace']['id']},'Workspace drag source changed')",
+                  lookup,
+                  f"assert(not target_ws or (target_ws.monitor and target_ws.monitor.name=={target_monitor}),'Workspace drag target changed monitor')"]
+        if fresh_target.get("slot"):
+            guards.append(f"if not target_ws then hl.workspace_rule({{workspace={lua_string(target['name'])},monitor={target_monitor}}}) end")
+        elif fresh_target["existing"]:
+            guards.append("assert(target_ws,'Workspace drag target disappeared')")
+        self.ipc.dispatch(";".join(guards + [
             "hl.dispatch(hl.dsp.window.fullscreen_state({window=w,internal=0,client=0,action='set'}))",
             "hl.dispatch(hl.dsp.window.float({window=w,action='disable'}))",
             f"hl.dispatch(hl.dsp.window.move({{window=w,workspace={workspace},follow=false}}))"]))

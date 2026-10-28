@@ -234,13 +234,14 @@ ShellRoot {
                 delegate: Rectangle {
                     id: card
                     required property var modelData
-                    readonly property bool selected: root.hovered === modelData.name
+                    readonly property bool selected: !modelData.disabled && root.hovered === modelData.name
                     readonly property var workspaceMonitor: root.monitorData(modelData.monitor)
                     x: modelData.x; y: modelData.y
                     width: modelData.width; height: modelData.height
                     z: selected ? 10 : 1
                     scale: selected ? root.dashboard.zoom : 1
                     radius: root.dashboard.rounding || 0
+                    opacity: modelData.disabled ? .45 : 1
                     color: Qt.lighter(root.background, 1.3)
                     border.width: selected ? 3 : 1
                     border.color: selected ? root.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, .24)
@@ -255,7 +256,7 @@ ShellRoot {
                     Text {
                         textFormat: Text.PlainText
                         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 9 }
-                        text: card.modelData.monitor
+                        text: card.modelData.disabled ? (root.polish ? "Niedostępny: pulpit na innym monitorze" : "Unavailable: workspace on another monitor") : card.modelData.monitor
                         color: root.foreground; opacity: .65; font.pixelSize: 11
                     }
                     Item {
