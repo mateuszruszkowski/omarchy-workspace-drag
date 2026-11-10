@@ -8,7 +8,7 @@
   "backgroundOpacity": 0.72,
   "previewMode": "thumbnails",
   "animationPreset": "smooth",
-  "hiddenMonitors": ["STUDIO-VIRTUAL"],
+  "hiddenMonitors": [],
   "timeoutSeconds": 25,
   "pollMilliseconds": 35,
   "restoreCursor": true,

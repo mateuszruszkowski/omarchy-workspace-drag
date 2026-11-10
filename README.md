@@ -1,242 +1,245 @@
-# Workspace drag for rogo
+# Workspace Drag for Omarchy
 
-Hold **Super+Alt+left mouse button** over a normal window. The source display shows
-normal workspaces arranged in separate circles around each monitor label.
-Each monitor with an Omarchy block mapping always has local slots **1–5**,
-including empty slots. Additional existing normal workspaces remain available.
-The monitor circles therefore stay present even before windows are opened.
-For example, local slot 3 on DP-6 uses Hyprland ID 13; identity remains separate
-from its displayed number. Colliding labels for additional guest workspaces
-include their real IDs. A base slot currently located on another monitor is
-shown once, dimmed and unavailable, rather than silently moving that workspace.
-Without a usable block mapping, the legacy existing/explicit-rule fallback
-remains available. Appearance-only rules never create extra cards.
+Move a window to any workspace on any monitor by dragging it onto a live overview,
+or by holding two modifiers and pressing a digit.
 
-Dropping onto an empty mapped slot binds that workspace to its intended monitor
-and moves the exact window silently in one checked Lua operation. Existing
-workspaces are never moved wholesale by this action.
-The dimmed desktop remains visible behind the overview. A small dragged-window
-preview follows the pointer. The virtual STUDIO-VIRTUAL output is hidden by default;
-its group is included when it is the source display. Move to a preview and release the mouse
-button to move that window there. The window leaves fullscreen, becomes tiled,
-and moves silently. The active source workspace stays visible. The pointer returns
-to its starting position so the next window can be moved immediately.
+![Workspace Drag overview with two monitors](preview.png)
 
-The hovered preview enlarges. Hit testing always uses its original slot, including
-on mixed-scale and rotated displays. Release outside a slot, release on the source
-workspace, press Escape, or hold longer than 25 seconds to cancel. Very short holds
-under 120 ms cancel. Press and release carry a sequence token so an early release
-cannot accidentally start a stuck drag.
+Omarchy 4.5 gives every monitor its own workspaces. Workspace Drag makes that
+layout visible at the moment you need it: hold a shortcut over a window and each
+monitor appears as a ring of its workspaces, with live thumbnails of what is
+already there. Release over a workspace and the window moves there silently,
+while every monitor keeps showing what it was showing.
 
-## Keyboard movement
+## Features
 
-Hold **left Alt+Shift** to see available destinations before pressing a digit.
-The passive overview leaves application keyboard focus unchanged. **1–5** moves
-the captured window to that local slot. Extra digits work only when the
-corresponding existing workspace is visible; **0** denotes local slot 10.
-**Left/Right** selects a monitor, **Up/Down** selects a workspace, and **Enter**
-commits the highlighted destination. Release the modifiers or press Escape to
-cancel. All modes show the same five base slots per mapped monitor plus existing
-workspaces. Extra empty slots are not synthesized for keyboard shortcuts. The source workspace has
-a persistent accent border and the label **Tu jest okno**. In keyboard mode,
-the target monitor has a bright ring and a **Wybrany monitor** label. Monitor
-headings and card footers use readable names: **Ekran laptopa** for the built-in
-display and **iiyama** for the detected iiyama manufacturer. Connector/model details
-remain secondary; dispatch still uses the original monitor identifier. Each
-actionable numbered card shows its digit in a keycap; keycaps on the selected
-monitor are highlighted, while other monitors keep subdued hints. Slot 10 shows
-**0**. Disabled cards and names without a direct numeric shortcut have no digit
-hint. These keyboard hints do not appear in mouse dragging or appearance preview.
+- **Mouse drag.** Hold `Super + Alt + left mouse button` over a window, point at a
+  workspace, release.
+- **Keyboard move.** Hold `left Alt + Shift`, press `1`–`5` for a workspace on the
+  highlighted monitor, or use the arrow keys and `Enter`.
+- **Pinned chooser.** `Alt + Shift + Space` keeps the overview open so you can
+  browse with `Tab` and the arrow keys.
+- **Per-monitor slots.** Every mapped monitor always shows its five local
+  workspaces, including empty ones, so a destination exists before any window
+  is opened there.
+- **Live thumbnails** of the windows on each workspace, or window titles if you
+  prefer.
+- **Settings window and bar icon** for the shortcut, dimming, preview size, hover
+  zoom and animation preset.
+- **Follows your theme.** Colors come from Omarchy's current `colors.toml`,
+  rounding from Hyprland.
+- **No compiled plugins and no extra packages.** Lua bindings, a small Python
+  backend and a standalone Quickshell window.
 
-For a persistent chooser, press **Alt+Shift+Space**, then release the modifiers.
-Use **Tab/Shift+Tab** or Left/Right for monitors, Up/Down for workspaces, and
-Enter or a digit to move. Escape closes it. This pinned chooser takes keyboard
-focus. Moving is silent: each monitor keeps its active workspace, and the chosen
-window becomes tiled at the destination. Changed source identity, monitor geometry or workspace ownership cancels the
-operation. Active-window mode also cancels if another window receives focus.
+## Requirements
 
-The settings panel chooses **Aktywne okno** (default) or **Okno pod kursorem**
-for the keyboard source. The exact source is captured at prefix press; subsequent
-pointer motion cannot change it. An empty point or overlapping eligible windows in pointer mode does nothing;
-the native API cannot reliably identify stacking order.
-This choice does not change mouse dragging. Source selection is allowlisted plain
-data in `keyboard-source.conf`, and changing it reloads the native hook.
+- Omarchy 4.5 or newer (developed on the edge channel)
+- Hyprland with Lua configuration (tested on 0.57.1)
+- Quickshell 0.3.2
+- Python 3
 
-Right Alt is excluded because it is AltGr in the Polish layout. The prefix is
-inactive in a non-default submap, including Parsec keyboard forwarding. Existing
-**Alt+Shift+Tab** and OCR/screenshot shortcuts retain their actions. Other keys
-cancel the passive chooser and continue to their normal handler. Prefix bindings
-are data in `keyboard.conf`; the settings panel can disable them or choose at
-least two modifiers. It checks occupied destination/navigation shortcuts before
-saving. The modifier hook stores only modifier state, not typed text. Simultaneous
-holds of the same modifier on multiple keyboards cannot be distinguished by the
-Hyprland event API.
-
-## Install and remove
-
-Requires Hyprland with Lua dispatchers, Quickshell 0.3.2,
-Python 3. No additional packages or compiled Hyprland plugins are needed.
+## Install
 
 ```bash
-python3 ./install.py
+git clone https://github.com/mateuszruszkowski/omarchy-workspace-drag.git
+```
+
+```bash
+python3 omarchy-workspace-drag/install.py
+```
+
+```bash
 omarchy plugin enable local.workspace-drag --section centerBegin
+```
+
+```bash
 hyprctl reload
-hyprctl configerrors
+```
+
+```bash
 ~/.local/share/workspace-drag/workspace-drag start
 ```
 
-The installer copies the extension into `~/.local/share/workspace-drag`, appends
-one marked include to `~/.config/hypr/bindings.lua`, and one marked autostart call
-to `~/.config/hypr/autostart.lua`. It creates only its own
-`~/.config/hypr/workspace-drag.lua` module. Every run saves affected files and any
-previous extension under `~/.local/state/workspace-drag/backups/`. It does not reload
-Hyprland, start processes, or change monitor configuration. Existing extension
-`config.json` and `shortcut.conf` are preserved on update. An older shipped
-`bindings.lua` is migrated after saving its original custom shortcut. Unknown
-custom Lua is refused before installation changes any files. A launcher named
-**Workspace Drag — Ustawienia** is installed in the application menu.
+Run `hyprctl configerrors` afterwards; it should report no errors.
+
+The installer:
+
+- copies the extension to `~/.local/share/workspace-drag`,
+- adds one marked `require` line to `~/.config/hypr/bindings.lua` and one marked
+  autostart line to `~/.config/hypr/autostart.lua`,
+- creates its own `~/.config/hypr/workspace-drag.lua` module,
+- installs the `local.workspace-drag` bar widget and a
+  **Workspace Drag — Ustawienia** entry in the application menu,
+- saves every file it touches under `~/.local/state/workspace-drag/backups/`.
+
+It never reloads Hyprland, starts processes, or changes monitor configuration.
+
+### Update
+
+Pull the repository and run `install.py` again. Your `config.json` and
+`shortcut.conf` are kept.
+
+### Uninstall
 
 ```bash
 ~/.local/share/workspace-drag/workspace-drag stop
-python3 ./install.py --uninstall
-hyprctl reload
-hyprctl configerrors
 ```
 
-Uninstall removes only the marked includes and the extension's own paths, keeping
-the rest of user configuration and all backups. A modified include module is kept.
-Do not restore entire backed-up binding files over concurrent edits. Restore only
-the extension's changes when necessary.
+```bash
+python3 omarchy-workspace-drag/install.py --uninstall
+```
+
+```bash
+hyprctl reload
+```
+
+Uninstall removes only the marked lines and the extension's own files. The rest
+of your configuration and all backups stay. An include module you edited by hand
+is kept.
+
+## Usage
+
+### Mouse
+
+Hold `Super + Alt + left mouse button` over a normal window. The monitor under
+the pointer dims and shows one ring of workspaces per monitor. A small preview of
+the window follows the pointer, and the workspace under it grows.
+
+Release over a workspace to move the window. It leaves fullscreen, becomes tiled
+and moves without switching any monitor's active workspace. The pointer returns
+to where the drag started, so the next window can be moved right away.
+
+To cancel: release outside a slot, release on the source workspace, press
+`Escape`, or hold for longer than 25 seconds. Holds shorter than 120 ms are
+ignored.
+
+### Keyboard
+
+Hold `left Alt + Shift` to see the destinations.
+
+| Key | Action |
+| --- | --- |
+| `1`–`5` | Move to that workspace on the highlighted monitor |
+| `0` | Local workspace 10, when it exists |
+| `Left` / `Right` | Choose a monitor |
+| `Up` / `Down` | Choose a workspace |
+| `Enter` | Move to the highlighted workspace |
+| `Space` | Pin the chooser (then `Tab` / `Shift + Tab` also switch monitors) |
+| `Escape`, or release the modifiers | Cancel |
+
+The source window is the active window by default. The settings window can
+switch that to the window under the pointer. Either way the source is captured
+when the modifiers go down, so later pointer movement cannot change it.
+
+Right Alt is left alone because it is AltGr on many layouts. The prefix is
+inactive inside a non-default Hyprland submap, and existing bindings such as
+`Alt + Shift + Tab` keep their actions.
 
 ## Settings
 
-Open **Workspace Drag — Ustawienia** in the application menu, or run:
+Open **Workspace Drag — Ustawienia** from the application menu, click the grid
+icon in the bar, or run:
 
 ```bash
 ~/.local/share/workspace-drag/workspace-drag settings
 ```
 
-The grid icon immediately to the left of the clock also opens settings. Clicking
-it while the panel is open focuses the existing window. The installer copies the
-user-owned `local.workspace-drag` bar plugin; the enable command above places it
-in `centerBegin` without changing the clock's center section. Other bar entries
-and plugin files are preserved.
+The window sets the mouse shortcut, the keyboard prefix, backdrop dimming,
+thumbnails or titles, preview size (50–200%), hover zoom (100–135%) and the
+animation preset. **Podgląd** (preview) opens the real overview with unsaved
+values without grabbing a window. A shortcut that is already bound in Hyprland is
+rejected before any file changes. Earlier files are saved under
+`~/.local/share/workspace-drag/settings-backups/` and restored if applying fails.
 
-The Polish settings window provides Super, Alt, Ctrl and Shift checkboxes, a
-left/right/middle mouse selector, a backdrop dimming slider and a choice between
-window thumbnails and window titles. Two additional sliders control workspace
-preview size (50–200%) and hover enlargement (100–135%). Size scales both
-dimensions together, preserving custom card proportions. The overview still fits
-the available display, so large settings may be constrained by screen space.
-The shortcut summary updates while editing. Keyboard movement has separate modifier
-controls and an enable switch. Animation choices are **Wyłączone**, **Szybkie**
-and **Płynne**; source highlighting stays visible in every preset. Opening fade
-and hover transitions use the current Omarchy colors and rounding. System-wide
-`animations:enabled = false` takes precedence over the selected preset.
-At least one modifier is required. **Domyślne** resets only the displayed draft.
-**Zapisz i zastosuj** writes it; **Wczytaj ponownie** discards the draft and reads
-the current saved settings. Closing the window discards unsaved edits.
+The overview is available in English and Polish and follows Omarchy's language.
+The settings window is currently Polish only.
 
-**Podgląd** opens the actual workspace overview using the current dimming and
-preview-mode, preview-size, hover-enlargement and animation controls, including unsaved edits. It displays real windows without
-grabbing one. **Zamknij podgląd** or Escape returns to the unchanged settings
-draft. The configured timeout also closes it. Preview neither saves settings nor
-moves windows, switches workspaces or restores the pointer. A running drag must
-finish before preview can open.
+Everything is plain data you can also edit by hand:
 
-A higher dimming percentage hides more of the desktop behind the overview.
-Appearance changes take effect on the next drag. A shortcut change checks live
-Hyprland bindings, then reloads and checks the compositor configuration. An
-occupied shortcut is rejected without changing files. The existing Super+mouse
-move/resize bindings are therefore preserved. The helper saves copies under
-`~/.local/share/workspace-drag/settings-backups/`, writes files atomically, and
-restores the previous files and reloads them if application fails. Errors stay
-visible in the window.
+| File | Content |
+| --- | --- |
+| `shortcut.conf` | Mouse chord, for example `SUPER + ALT + mouse:272` |
+| `keyboard.conf` | Keyboard prefix, for example `ALT + SHIFT` |
+| `keyboard-source.conf` | `active` or `pointer` |
+| `config.json` | Appearance and behaviour, see below |
 
-The shortcut is plain data in `~/.local/share/workspace-drag/shortcut.conf`, for
-example `SUPER + ALT + mouse:272`. Modifiers use the order SUPER, ALT, CTRL, SHIFT;
-buttons are 272 (left), 273 (right) and 274 (middle). `bindings.lua` reads only this
-allowlisted format and never evaluates the data as Lua. Keep manual shortcut
-changes in this file, then reload Hyprland and check `hyprctl configerrors`.
-The shortcut uses a normal press/release bind, without `mouse=true`, because
-Hyprland's mouse dispatcher bindings cannot run shell actions.
-
-Other settings remain in `~/.local/share/workspace-drag/config.json`. The panel
-preserves fields it does not edit. They load at the next drag without restart.
-
-| Setting | Default | Meaning |
+| `config.json` key | Default | Meaning |
 | --- | --- | --- |
-| `groupColumns` | 0 | Monitor circles per row. Zero chooses the largest fitting layout automatically. |
-| `cardWidth`, `cardHeight` | 230, 150 | Logical card size before fitting the source display. |
-| `cardScale` | 1.0 | Workspace preview size multiplier, 0.5–2.0, applied before fitting the source display. |
-| `gap` | 24 | Space between slots. |
-| `zoom` | 1.15 | Hover scale from 1.0 to 1.35. |
-| `backgroundOpacity` | 0.72 | Dimmed theme backdrop opacity. The desktop remains visible underneath. |
-| `animationPreset` | `smooth` | Opening/hover animation preset: `none`, `quick`, or `smooth`; native disabled animations take precedence. |
-| `previewMode` | `thumbnails` | Set to `titles` to show application window titles instead of captures. |
-| `hiddenMonitors` | `["STUDIO-VIRTUAL"]` | Hide these monitor groups, except when one is the source. Set `[]` to show every output. |
-| `timeoutSeconds` | 25 | Cancel a stuck hold. |
-| `pollMilliseconds` | 35 | Cursor update interval during an active drag. |
-| `restoreCursor` | true | Return to the source location after dropping or cancelling. |
-| `defaultWorkspaces` | 1 through 10 | Legacy fallback for an unmapped source monitor when no individual normal workspace rules exist. |
+| `groupColumns` | `0` | Monitor rings per row. `0` picks the largest layout that fits. |
+| `cardWidth`, `cardHeight` | `230`, `150` | Logical card size before fitting the display. |
+| `cardScale` | `1.0` | Preview size multiplier, 0.5–2.0. |
+| `gap` | `24` | Space between slots. |
+| `zoom` | `1.15` | Hover scale, 1.0–1.35. |
+| `backgroundOpacity` | `0.72` | Backdrop dimming. The desktop stays visible underneath. |
+| `animationPreset` | `smooth` | `none`, `quick` or `smooth`. Hyprland's `animations:enabled = false` wins. |
+| `previewMode` | `thumbnails` | `titles` shows window titles instead of captures. |
+| `hiddenMonitors` | `[]` | Monitor names to leave out, for example a virtual output. The source monitor is always shown. |
+| `timeoutSeconds` | `25` | Cancel a hold that got stuck. |
+| `pollMilliseconds` | `35` | Pointer update interval during a drag. |
+| `restoreCursor` | `true` | Return the pointer to where the drag started. |
+| `defaultWorkspaces` | `1`–`10` | Fallback for a monitor without an Omarchy workspace block. |
 
-The dashboard uses Omarchy's current `colors.toml`, watches language changes, and
-supports Polish and English. If no language file exists, it follows `LANG`. Rounded
-corners follow `decoration:rounding` from Hyprland at drag start. All dynamic labels
-are plain text. Workspace names are validated before use in dispatchers.
+Appearance changes apply on the next drag. Shortcut changes reload Hyprland.
 
-## Architecture and limits
+## How it works
 
-`settings.qml` is a separate normal window; it does not change the click-through
-overview. `settings.py` validates its JSON draft and applies changes without shell
-interpolation. `bindings.lua` reads the chord and owns the unique press/release token. `shell.qml` is an
-isolated resident Quickshell UI and exposes `workspaceDrag` IPC. `backend.py` owns
-the state machine, source-window selection, card layout, final global cursor hit
-test and address-selected Hyprland dispatch. Its state is idle or a `Dragging`
-record. `end` commits a valid target; cancel, timeout and stale topology return to
-idle. A 120 ms deferred pointer restoration lets the layer close first.
+| Part | Role |
+| --- | --- |
+| `bindings.lua` | Hyprland bindings. Reads the chord from `shortcut.conf` and tags each press and release with a sequence token. |
+| `backend.py` | State machine: picks the source window, lays out the cards, hit-tests the pointer, dispatches the move by window address. |
+| `shell.qml` | Standalone Quickshell overlay, driven over the `workspaceDrag` IPC target. |
+| `settings.qml`, `settings.py` | Settings window and the helper that validates and applies changes atomically. |
+| `bar-plugin/` | The `local.workspace-drag` bar widget that opens settings. |
+| `install.py` | Installer and uninstaller. |
 
-A shell plugin was considered but would put this experiment in Omarchy's main
-shell process. An external screenshot tool was considered but would need subprocess
-capture and risks recursive monitor thumbnails. This standalone process uses native
-`ScreencopyView` with each Hyprland toplevel's Wayland handle. No whole-output
-capture, network access, or screenshot cache is used. Window titles stay in the
-local UI pipe, are rendered as plain text in titles mode, and are never logged.
-Only pointer deltas are sent each frame; static models are published once per drag.
-The mouse and passive keyboard overlays do not take keyboard focus. Mouse release
-is supplied by the native binding; pinned keyboard mode and settings preview take
-exclusive focus until dismissed. Native Lua bindings supply release and guarded Escape.
-Taking exclusive or on-demand layer keyboard focus would clear Hyprland
-mouse-button state and lose the release event. Slots remain fixed while hovered
-cards enlarge. Circle placement reserves room for enlarged cards and center labels
-and packs groups into an adaptive grid on the source output.
+The overview runs in its own Quickshell process instead of as a plugin inside
+Omarchy's shell, which keeps this code out of the process that draws the bar.
 
-Captures of inactive workspaces depend on the compositor and application continuing
-to supply buffers. If unavailable, the miniature shows the application class. A
-workspace with no monitor rule is assigned to the source display for empty-target
-planning. Monitor description rules are supported. Dynamic workspace selectors
-such as `w[1-10]` are not expanded. All existing normal workspaces are still shown.
-Special workspaces are excluded. Named normal workspaces, including those with
-negative Hyprland IDs, are supported. The overlay is shown only on the source
-display, so every visible monitor group can be reached without crossing outputs.
+Thumbnails use Quickshell's `ScreencopyView` on each window's own Wayland handle.
+Nothing captures a whole output, nothing is cached on disk and nothing touches
+the network. Window titles stay in the local UI pipe, are rendered as plain text
+and are never logged. Workspace names are validated before they reach a
+dispatcher, and configuration files are parsed as data, never evaluated as Lua.
 
-## Diagnostics and verification
+## Limits
+
+- Thumbnails of inactive workspaces depend on the application still supplying
+  buffers. When it does not, the card shows the application class instead.
+- Dynamic workspace selectors such as `w[1-10]` are not expanded.
+- Special workspaces are excluded.
+- With the keyboard source set to the window under the pointer, an empty spot or
+  overlapping windows do nothing: Hyprland's API does not expose stacking order.
+- Hyprland cannot tell apart the same modifier held on two keyboards.
+
+## Development
 
 ```bash
 python3 -m unittest discover -s . -p 'test_*.py' -v
+```
+
+The 115 unit tests fake the Hyprland IPC boundary and cover release coordinates,
+early release, cancel and timeout, a closed source window, monitor unplug and
+scale changes, mixed-scale and rotated hit testing, settings validation, and
+install, update and uninstall.
+
+Useful while working on it:
+
+```bash
 ~/.local/share/workspace-drag/workspace-drag status
-~/.local/share/workspace-drag/workspace-drag cancel
+```
+
+```bash
 ~/.local/share/workspace-drag/workspace-drag demo
+```
+
+```bash
 qs log --path ~/.local/share/workspace-drag/shell.qml --tail 40
 ```
 
-`demo` creates synthetic targets and illustrative windows without moving any
-real window. Its backdrop is solid so a screenshot does not expose the desktop. It still follows the real pointer to exercise hover zoom. The timeout or
-`cancel` closes it. `begin TOKEN` and `end TOKEN` are also available for controlled
-integration testing. `status` contains state, monitor and hovered workspace, without
-window titles. Unit tests fake the IPC boundary and cover fresh release coordinates,
-silent address-targeted movement, early release, cancel/timeout, source close,
-monitor unplug and scale changes, empty configured targets, mixed-scale hit testing,
-pointer restoration, demo safety, non-overlapping two/three-monitor circle layouts,
-and virtual-output filtering. Real compositor acceptance, visual checks and
-remaining limits are recorded in [VERIFICATION.md](VERIFICATION.md).
+`demo` draws synthetic workspaces on a solid backdrop without touching any real
+window; `cancel` or the timeout closes it. Acceptance runs on a real compositor
+are recorded in [VERIFICATION.md](VERIFICATION.md).
+
+## License
+
+[MIT](LICENSE)

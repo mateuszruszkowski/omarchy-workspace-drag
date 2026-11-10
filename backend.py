@@ -15,7 +15,7 @@ import time
 ROOT = Path(__file__).parent
 DEFAULTS = {"groupColumns": 0, "cardWidth": 230, "cardHeight": 150, "gap": 24,
             "cardScale": 1, "zoom": 1.15, "backgroundOpacity": .72, "previewMode": "thumbnails", "animationPreset": "smooth",
-            "hiddenMonitors": ["STUDIO-VIRTUAL"], "timeoutSeconds": 25, "pollMilliseconds": 35,
+            "hiddenMonitors": [], "timeoutSeconds": 25, "pollMilliseconds": 35,
             "restoreCursor": True, "defaultWorkspaces": list(range(1, 11))}
 
 

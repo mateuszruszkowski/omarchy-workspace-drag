@@ -194,6 +194,9 @@ class WorkspaceDragTests(unittest.TestCase):
                     self.assertFalse(x < x2 + w2 and x2 < x + w and y < y2 + h2 and y2 < y + h)
 
     def test_hidden_virtual_monitor_is_omitted_but_source_is_always_visible(self):
+        hidden = patch("backend.load_config", side_effect=lambda: dict(DEFAULTS, hiddenMonitors=["STUDIO-VIRTUAL"]))
+        hidden.start()
+        self.addCleanup(hidden.stop)
         virtual = copy.deepcopy(self.ipc.data["monitors"][1])
         virtual.update(id=2, name="STUDIO-VIRTUAL", x=5040)
         virtual["activeWorkspace"]["id"] = 21
